@@ -30,3 +30,10 @@ metals.sbt
 .idea
 .idea_modules
 /.worksheet/
+
+# Stainless
+# Keep: project/lib/sbt-stainless.jar, stainless/ch/epfl/lara/stainless-library_3/
+# Ignore: the zip and the 87MB compiler plugin jar (extract locally from sbt-stainless.zip)
+sbt-stainless.zip
+stainless/ch/epfl/lara/stainless-dotty-plugin_3.7.2/
+.stainless-cache/
