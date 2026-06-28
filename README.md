@@ -54,3 +54,4 @@ evm/    Stack, memory, opcodes and EVM execution logic
 - [Ethereum Yellow Paper](https://ethereum.github.io/yellowpaper/paper.pdf)
 - [EVM opcodes reference](https://www.evm.codes/)
 - [Osaka/Fusaka EIPs (EIP-7607)](https://eips.ethereum.org/EIPS/eip-7607)
+- [EVM From Scratch](https://www.evm-from-scratch.app/)
