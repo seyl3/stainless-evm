@@ -6,7 +6,7 @@ Formally verified EVM implementation targeting the Osaka execution layer spec, w
 
 - JDK 17+
 - sbt 1.7+
-- z3 or cvc5 for SMT solving: `brew install z3 cvc5`
+- z3 or cvc5 for SMT solving: `brew install z3`
 
 ## Setup
 
@@ -21,14 +21,14 @@ This populates `project/lib/sbt-stainless.jar` and `stainless/` (the local Maven
 ## Build and verify
 
 ```
-sbt core/compile    # verify and compile core (Word256, primitives)
-sbt evm/compile     # verify and compile evm (Stack, opcodes)
+sbt core/compile    # verify and compile core 
+sbt evm/compile     # verify and compile evm 
 sbt compile         # both
 ```
 
 Stainless verification runs automatically on every compile. Each function annotated with `require`/`ensuring` produces verification conditions that are discharged by the SMT solver. The summary at the end of compilation shows valid/invalid/unknown counts.
 
-To skip verification temporarily (e.g. for a fast iteration):
+To skip verification temporarily:
 
 ```
 sbt "set every stainlessEnabled := false" compile
@@ -37,8 +37,8 @@ sbt "set every stainlessEnabled := false" compile
 ## Project structure
 
 ```
-core/   Word256 and EVM primitive types
-evm/    Stack and EVM execution logic
+core/   EVM primitive types
+evm/    Stack, memory, opcodes and EVM execution logic
 ```
 
 ## Scala and Stainless references
