@@ -27,22 +27,26 @@ jobs:
       - name: Install z3 (smt-z3 solver)
         run: sudo apt-get update && sudo apt-get install -y z3
 
-      - name: Cache Stainless plugin
+      # The 87 MB stainless-dotty-plugin jar is gitignored (not committed), unlike
+      # project/lib/sbt-stainless.jar which is. Cache and restore only the missing
+      # compiler-plugin artifact.
+      - name: Cache Stainless compiler plugin
         uses: actions/cache@v4
         with:
-          path: |
-            project/lib/sbt-stainless.jar
-            stainless/ch/epfl/lara/stainless-dotty-plugin_3.7.2
+          path: stainless/ch/epfl/lara/stainless-dotty-plugin_3.7.2
           key: stainless-plugin-${{ env.STAINLESS_VERSION }}
 
       - name: Fetch Stainless plugin (on cache miss)
         run: |
-          if [ ! -f project/lib/sbt-stainless.jar ]; then
+          PLUGIN_JAR="stainless/ch/epfl/lara/stainless-dotty-plugin_3.7.2/${STAINLESS_VERSION}/stainless-dotty-plugin_3.7.2-${STAINLESS_VERSION}.jar"
+          if [ -f "$PLUGIN_JAR" ]; then
+            echo "Plugin restored from cache: $PLUGIN_JAR"
+          else
+            echo "Cache miss; downloading sbt-stainless.zip"
             curl -fsSL -o sbt-stainless.zip \
               "https://github.com/epfl-lara/stainless/releases/download/v${STAINLESS_VERSION}/sbt-stainless.zip"
-            unzip -o sbt-stainless.zip
-          else
-            echo "Plugin restored from cache."
+            unzip -o -q sbt-stainless.zip
+            test -f "$PLUGIN_JAR" || { echo "::error::plugin jar missing after unzip"; exit 1; }
           fi
 
       - name: Compile and verify
