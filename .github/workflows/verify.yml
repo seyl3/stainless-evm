@@ -52,9 +52,11 @@ jobs:
       - name: Compile and verify
         run: |
           set -o pipefail
-          sbt compile 2>&1 | tee verify.log
+          # evm compiles proofs + core + evm sources, so this one pass verifies
+          # the whole tree (no redundant re-verification of core like `compile`).
+          sbt evm/compile 2>&1 | tee verify.log
           # Stainless reports failed VCs as warnings and still exits 0, so the
-          # success of `sbt compile` alone does NOT mean verification passed.
+          # success of the sbt task alone does NOT mean verification passed.
           # Fail the job if any verification condition is not valid.
           if grep -qE '=> (INVALID|UNKNOWN|TIMEOUT|CANCELLED)' verify.log; then
             echo "::error::Stainless reported non-valid verification conditions"
