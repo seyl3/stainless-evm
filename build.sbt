@@ -6,13 +6,14 @@ lazy val commonSettings = Seq(
   resolvers += MavenRepository("stainless-local", s"file://${(ThisBuild / baseDirectory).value.getAbsolutePath}/stainless"),
   scalacOptions += "-Wconf:src=.*stainless-library.*:s",
 )
-
 lazy val core = project
   .in(file("core"))
   .enablePlugins(StainlessPlugin)
   .settings(
     name := "core",
     commonSettings,
+    Compile / unmanagedSourceDirectories +=
+      (ThisBuild / baseDirectory).value / "proofs" / "src" / "main" / "scala",
   )
 
 lazy val evm = project
