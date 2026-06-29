@@ -37,9 +37,52 @@ sbt "set every stainlessEnabled := false" compile
 ## Project structure
 
 ```
+proofs/ Pure-math foundation: modulus, exponentiation, bitwise model and lemmas
 core/   EVM primitive types
 evm/    Stack, memory, opcodes and EVM execution logic
 ```
+
+## Verification approach: lemmas and axioms
+
+Each function carries its specification inline as `require` (preconditions) and `ensuring` (postconditions). Stainless turns these into verification conditions handled by the SMT solver. The solver knows nothing about a function beyond its literal definition and will not discover non-trivial facts on its own, so when it gets stuck (`unknown`) we give it the missing fact in one of two forms, both live in `proofs/src` and are invoked from the EVM code as needed.
+
+### Lemmas: proven facts
+
+A lemma is an ordinary recursive `Boolean` function whose recursion is an
+inductive proof. Stainless verifies it and checks it terminates so it cannot be wrong. Example: the SMT
+solver cannot show `pow(2, n) > 0` for all `n` (that needs induction), so we
+prove it once and reuse it.
+
+```scala
+@ghost
+def powTwoPos(n: BigInt): Boolean = {
+  require(n >= 0)
+  decreases(n)                       // proves the proof terminates
+  pow(BigInt(2), n) > 0 because {
+    if (n == 0) trivial              // base case
+    else powTwoPos(n - 1)            // inductive step
+  }
+}.holds
+```
+
+`@ghost` means it is erased from the compiled bytecode (zero runtime cost).
+`Word256.>>` calls `powTwoPos(shift)` so the solver knows the divisor is nonzero.
+
+### Axioms: trusted facts
+
+Some facts cannot be proven at all because they fall outside Stainless's logic. Bitwise `&`, `|`, `^` on `BigInt` have no theory, so `Bitwise.and`/`or`/`xor` are `@extern`. As a workaround solution we state their true properties as **axioms**: an `@extern` function whose `ensuring` is assumed rather than proven. We use this instead of the built-in `assume(...)` construct because it allows assumption naming, reusabilitiy and centralizes them in one place. Example, "OR of two 256-bit values is still a 256-bit value":
+
+```scala
+@extern
+def orBound(a: BigInt, b: BigInt): Unit = {
+  require(a >= 0 && a < MODULO && b >= 0 && b < MODULO)
+  ()                                 
+}.ensuring(_ => or(a, b) >= 0 && or(a, b) < MODULO && or(a, b) >= a && or(a, b) >= b)
+```
+
+On an `@extern` function `ensuring` goes from "must prove" to "may assume", which is what turns a postcondition into an axiom. `Word256.|` calls `orBound` to add these assumptions.
+
+These axioms are the project's **trusted base**: if one is false, the whole proof becomes unsound. They are kept to a minimum, used only where Stainless genuinely cannot reason (like bitwise ops), and every one is true of 256-bit two's-complement integers. They are all collected in `Bitwise` so the trusted surface is auditable in one place. Where a "bitwise" op is actually plain arithmetic (`not(a) == MAX_VALUE - a`) it is a real verified function, not an axiom.
 
 ## Scala and Stainless references
 
