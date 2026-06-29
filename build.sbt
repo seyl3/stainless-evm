@@ -16,13 +16,20 @@ lazy val core = project
       (ThisBuild / baseDirectory).value / "proofs" / "src" / "main" / "scala",
   )
 
+// `evm` references `core` types (e.g. Word256 fields in Stack), and Stainless
+// extracts cross-module references from source, not bytecode. So `evm` compiles
+// proofs + core sources directly instead of `dependsOn(core)` (which would only
+// share bytecode and also double-define the classes).
 lazy val evm = project
   .in(file("evm"))
   .enablePlugins(StainlessPlugin)
-  .dependsOn(core)
   .settings(
     name := "evm",
     commonSettings,
+    Compile / unmanagedSourceDirectories ++= Seq(
+      (ThisBuild / baseDirectory).value / "proofs" / "src" / "main" / "scala",
+      (ThisBuild / baseDirectory).value / "core" / "src" / "main" / "scala",
+    ),
   )
 
 lazy val root = project
