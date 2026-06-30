@@ -49,13 +49,14 @@ evm/src/main/scala/evm/
   Stack.scala                  The 1024-item EVM stack (push, pop, peek, dup, swap), verified to respect the depth bound
   Memory.scala                 Byte-addressable EVM memory (load, store, store8, mcopy, msize, expand), with proven write/read round-trips
   Storage.scala                Persistent/transient key-value store (load, store) for SLOAD/SSTORE and TLOAD/TSTORE
-  Opcode.scala                 Opcode enum 
+  Opcode.scala                 Opcode enum (all ~150 opcodes with hex and descriptions), hex lookup and per-opcode base gas
 evm/src/test/scala/evm/
   core/Word256Suite.scala      munit unit tests for Word256
   StackSuite.scala             munit unit tests for Stack
   MemorySuite.scala            munit unit tests for Memory
   StorageSuite.scala           munit unit tests for Storage
   GasSuite.scala               munit unit tests for the gas formulas
+  OpcodeSuite.scala            munit unit tests for opcode hex and base gas
 build.sbt                      Build and Stainless wiring; source roots keep each module one verification unit
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
 ```
