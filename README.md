@@ -42,17 +42,19 @@ proofs/src/main/scala/evm/proofs/   Pure helper functions and all @ghost lemmas,
   Bitwise.scala                Bitwise and/or/xor as trusted @extern functions with assumed algebraic axioms; not is verified
   Collections.scala            Generic List/Map lemmas (for example updated preserves other indices)
   Bytes.scala                  Byte-array packing over Map: readBytes/writeBytes/copyBytes plus framing and round-trip lemmas
+  Gas.scala                    Pure gas pricing formulas (memory expansion, copy, keccak, exp, log, access, sstore) with non-negativity lemmas
 core/src/main/scala/evm/core/
   Word256.scala                The 256-bit EVM word with verified arithmetic, bitwise, shift, signed, and comparison operations
 evm/src/main/scala/evm/
   Stack.scala                  The 1024-item EVM stack (push, pop, peek, dup, swap), verified to respect the depth bound
-  Memory.scala                 Byte-addressable EVM memory (load, store, store8, mcopy, msize), with proven write/read round-trips
+  Memory.scala                 Byte-addressable EVM memory (load, store, store8, mcopy, msize, expand), with proven write/read round-trips
   Storage.scala                Persistent/transient key-value store (load, store) for SLOAD/SSTORE and TLOAD/TSTORE
 evm/src/test/scala/evm/
   core/Word256Suite.scala      munit unit tests for Word256
   StackSuite.scala             munit unit tests for Stack
   MemorySuite.scala            munit unit tests for Memory
   StorageSuite.scala           munit unit tests for Storage
+  GasSuite.scala               munit unit tests for the gas formulas
 build.sbt                      Build and Stainless wiring; source roots keep each module one verification unit
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
 ```
