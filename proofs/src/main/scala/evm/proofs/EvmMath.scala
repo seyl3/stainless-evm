@@ -14,7 +14,7 @@ object EvmMath {
     decreases(exp)
     if (exp == 0) BigInt(1)
     else base * pow(base, exp - 1)
-  }
+  }.ensuring(res => (base >= 0 ==> res >= 0) && (base >= 1 ==> res >= 1))
 
   def inBounds(v: BigInt): Boolean = v >= 0 && v <= MAX_VALUE
 
@@ -109,5 +109,41 @@ object EvmMath {
   def n256InBounds: Boolean = {
     inBounds(BigInt(256)) because
       (powMonotone(BigInt(9), BigInt(256)) && pow(BigInt(2), BigInt(9)) == 512)
+  }.holds
+
+  @ghost
+  def powPos(base: BigInt, exp: BigInt): Boolean = {
+    require(base > 0 && exp >= 0)
+    decreases(exp)
+    pow(base, exp) > 0 because {
+      if (exp == 0) trivial
+      else powPos(base, exp - 1)
+    }
+  }.holds
+
+  @ghost
+  def powAdd(base: BigInt, a: BigInt, b: BigInt): Boolean = {
+    require(a >= 0 && b >= 0)
+    decreases(b)
+    pow(base, a + b) == pow(base, a) * pow(base, b) because {
+      if (b == 0) trivial
+      else powAdd(base, a, b - 1)
+    }
+  }.holds
+
+  @ghost
+  def powPow(base: BigInt, i: BigInt, j: BigInt): Boolean = {
+    require(i >= 0 && j >= 0)
+    decreases(j)
+    pow(pow(base, i), j) == pow(base, i * j) because {
+      if (j == 0) trivial
+      else powPow(base, i, j - 1) && powAdd(base, i, i * (j - 1))
+    }
+  }.holds
+
+  @ghost
+  def pow256_32: Boolean = {
+    pow(BigInt(256), BigInt(32)) == MODULO because
+      (powPow(BigInt(2), BigInt(8), BigInt(32)) && pow(BigInt(2), BigInt(8)) == 256)
   }.holds
 }
