@@ -138,4 +138,12 @@ case class Word256(value: BigInt) {
     (if (shift.value >= BigInt(256)) result.value == BigInt(0)
      else result.value == value / pow(BigInt(2), shift.value))
     && inBounds(result.value))
+
+  def isZero: Boolean = value == BigInt(0)
+  def lt(other: Word256): Boolean = value < other.value
+  def gt(other: Word256): Boolean = value > other.value
+  def slt(other: Word256): Boolean =
+    EvmMath.toSigned(value) < EvmMath.toSigned(other.value)
+  def sgt(other: Word256): Boolean =
+    EvmMath.toSigned(value) > EvmMath.toSigned(other.value)
 }
