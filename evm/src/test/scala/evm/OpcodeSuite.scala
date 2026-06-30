@@ -1,5 +1,7 @@
 package evm
 
+import stainless.lang.{Some, None}
+
 class OpcodeSuite extends munit.FunSuite {
 
   test("hex returns the opcode byte") {
@@ -22,5 +24,20 @@ class OpcodeSuite extends munit.FunSuite {
     assertEquals(Opcode.baseGas(Opcode.LOG2), BigInt(1125))
     assertEquals(Opcode.baseGas(Opcode.CREATE), BigInt(32000))
     assertEquals(Opcode.baseGas(Opcode.SELFDESTRUCT), BigInt(5000))
+  }
+
+  test("decode maps a byte to its opcode, None for undefined bytes") {
+    assertEquals(Opcode.decode(0x00), Some(Opcode.STOP))
+    assertEquals(Opcode.decode(0x01), Some(Opcode.ADD))
+    assertEquals(Opcode.decode(0x60), Some(Opcode.PUSH1))
+    assertEquals(Opcode.decode(0xFF), Some(Opcode.SELFDESTRUCT))
+    assertEquals(Opcode.decode(0x0C), None())
+    assertEquals(Opcode.decode(0x21), None())
+    assertEquals(Opcode.decode(0xF6), None())
+  }
+
+  test("decode is the inverse of hex") {
+    for op <- List(Opcode.STOP, Opcode.ADD, Opcode.PUSH32, Opcode.MCOPY, Opcode.CLZ, Opcode.SELFDESTRUCT) do
+      assertEquals(Opcode.decode(Opcode.hex(op)), Some(op))
   }
 }
