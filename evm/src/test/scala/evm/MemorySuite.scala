@@ -71,15 +71,25 @@ class MemorySuite extends munit.FunSuite {
     assertEquals(m1.getByte(2), BigInt(0x22))
   }
 
-  test("mcopy of zero length is a no-op on contents") {
-    val m = Memory.empty.store8(0, w(0x77)).mcopy(10, 0, 0)
+  test("mcopy of zero length is a no-op and never expands memory") {
+    val base = Memory.empty.store8(0, w(0x77))
+    val m = base.mcopy(1000, 0, 0)
     assertEquals(m.getByte(0), BigInt(0x77))
-    assertEquals(m.getByte(10), BigInt(0))
+    assertEquals(m.getByte(1000), BigInt(0))
+    assertEquals(m.msize, base.msize)
   }
 
   test("store8 normalizes a value larger than a byte") {
     val m = Memory.empty.store8(0, w(0x1234))
     assertEquals(m.getByte(0), BigInt(0x34))
+  }
+
+  test("expand grows size to cover an access without changing contents") {
+    val m = Memory.empty.store8(0, w(0x55)).expand(100)
+    assertEquals(m.msize, BigInt(128))
+    assertEquals(m.getByte(0), BigInt(0x55))
+    val same = Memory.empty.store(0, w(1)).expand(10)
+    assertEquals(same.msize, BigInt(32))
   }
 
   test("expandedTo rounds up to a multiple of 32 and never shrinks") {

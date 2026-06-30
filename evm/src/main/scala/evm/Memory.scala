@@ -24,6 +24,11 @@ case class Memory(data: Map[BigInt, BigInt], size: BigInt) {
     if (needed > size) needed else size
   }.ensuring(r => r >= size && r >= end && r % 32 == 0)
 
+  def expand(end: BigInt): Memory = {
+    require(end >= 0)
+    Memory(data, expandedTo(end))
+  }.ensuring(r => r.data == data && r.size == expandedTo(end) && r.size >= size && r.size >= end)
+
   def load(offset: BigInt): Word256 = {
     require(offset >= 0)
     EvmMath.pow256_32
@@ -49,11 +54,14 @@ case class Memory(data: Map[BigInt, BigInt], size: BigInt) {
 
   def mcopy(dst: BigInt, src: BigInt, len: BigInt): Memory = {
     require(dst >= 0 && src >= 0 && len >= 0)
-    val end = if (dst + len > src + len) dst + len else src + len
-    Memory(Bytes.copyBytes(data, data, dst, src, len), expandedTo(end))
+    val newSize =
+      if (len == 0) size
+      else expandedTo(if (dst > src) dst + len else src + len)
+    Memory(Bytes.copyBytes(data, data, dst, src, len), newSize)
   }.ensuring(r =>
     r.data == Bytes.copyBytes(data, data, dst, src, len)
-    && r.size >= size && r.size >= dst + len && r.size >= src + len)
+    && r.size >= size
+    && (len == 0 || (r.size >= dst + len && r.size >= src + len)))
 
   @ghost
   def storePreservesOutside(offset: BigInt, w: Word256, x: BigInt): Boolean = {
