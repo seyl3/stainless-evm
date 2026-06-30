@@ -1,0 +1,316 @@
+package evm
+
+enum Opcode:
+  case STOP // Halts execution
+  case ADD // Addition operation
+  case MUL // Multiplication operation
+  case SUB // Subtraction operation
+  case DIV // Integer division operation
+  case SDIV // Signed integer division operation (truncated)
+  case MOD // Modulo remainder operation
+  case SMOD // Signed modulo remainder operation
+  case ADDMOD // Modulo addition operation
+  case MULMOD // Modulo multiplication operation
+  case EXP // Exponential operation
+  case SIGNEXTEND // Extend length of two's complement signed integer
+
+  case LT // Less-than comparison
+  case GT // Greater-than comparison
+  case SLT // Signed less-than comparison
+  case SGT // Signed greater-than comparison
+  case EQ // Equality comparison
+  case ISZERO // Is-zero comparison
+  case AND // Bitwise AND operation
+  case OR // Bitwise OR operation
+  case XOR // Bitwise XOR operation
+  case NOT // Bitwise NOT operation
+  case BYTE // Retrieve single byte from word
+  case SHL // Left shift operation
+  case SHR // Logical right shift operation
+  case SAR // Arithmetic (signed) right shift operation
+  case CLZ // Count leading zero bits
+
+  case KECCAK256 // Compute Keccak-256 hash
+
+  case ADDRESS // Get address of currently executing account
+  case BALANCE // Get balance of the given account
+  case ORIGIN // Get execution origination address
+  case CALLER // Get caller address
+  case CALLVALUE // Get deposited value by the responsible execution
+  case CALLDATALOAD // Get input data of current environment
+  case CALLDATASIZE // Get size of input data in current environment
+  case CALLDATACOPY // Copy input data in current environment to memory
+  case CODESIZE // Get size of code running in current environment
+  case CODECOPY // Copy code running in current environment to memory
+  case GASPRICE // Get price of gas in current environment
+  case EXTCODESIZE // Get size of an account's code
+  case EXTCODECOPY // Copy an account's code to memory
+  case RETURNDATASIZE // Get size of output data from the previous call
+  case RETURNDATACOPY // 0x3E Copy output data from the previous call to memory
+  case EXTCODEHASH  // 0x3F Get hash of an account's code
+
+  case BLOCKHASH // Get the hash of one of the 256 most recent blocks
+  case COINBASE // Get the block's beneficiary address
+  case TIMESTAMP // Get the block's timestamp
+  case NUMBER // Get the block's number
+  case PREVRANDAO // Get the previous block's RANDAO mix
+  case GASLIMIT // Get the block's gas limit
+  case CHAINID // Get the chain ID
+  case SELFBALANCE // Get balance of currently executing account
+  case BASEFEE // Get the base fee
+  case BLOBHASH // Get versioned hashes
+  case BLOBBASEFEE // Get the blob base-fee of the current block
+
+  case POP // Remove item from stack
+  case MLOAD // Load word from memory
+  case MSTORE // Save word to memory
+  case MSTORE8 // Save byte to memory
+  case SLOAD // Load word from storage
+  case SSTORE // Save word to storage
+  case JUMP // Alter the program counter
+  case JUMPI // Conditionally alter the program counter
+  case PC // Get the value of the program counter
+  case MSIZE // Get the size of active memory in bytes
+  case GAS // Get the amount of available gas
+  case JUMPDEST // Mark a valid destination for jumps
+  case TLOAD // Load word from transient storage
+  case TSTORE // Save word to transient storage
+  case MCOPY // Copy memory areas
+
+  case PUSH0 // Place value 0 on stack
+  case PUSH1 // Place 1 byte item on stack
+  case PUSH2 // Place 2 byte item on stack
+  case PUSH3 // Place 3 byte item on stack
+  case PUSH4 // Place 4 byte item on stack
+  case PUSH5 // Place 5 byte item on stack
+  case PUSH6 // Place 6 byte item on stack
+  case PUSH7 // Place 7 byte item on stack
+  case PUSH8 // Place 8 byte item on stack
+  case PUSH9 // Place 9 byte item on stack
+  case PUSH10 // Place 10 byte item on stack
+  case PUSH11 // Place 11 byte item on stack
+  case PUSH12 // Place 12 byte item on stack
+  case PUSH13 // Place 13 byte item on stack
+  case PUSH14 // Place 14 byte item on stack
+  case PUSH15 // Place 15 byte item on stack
+  case PUSH16 // Place 16 byte item on stack
+  case PUSH17 // Place 17 byte item on stack
+  case PUSH18 // Place 18 byte item on stack
+  case PUSH19 // Place 19 byte item on stack
+  case PUSH20 // Place 20 byte item on stack
+  case PUSH21 // 0x74 Place 21 byte item on stack
+  case PUSH22 // 0x75 Place 22 byte item on stack
+  case PUSH23 // 0x76 Place 23 byte item on stack
+  case PUSH24 // 0x77 Place 24 byte item on stack
+  case PUSH25 // 0x78 Place 25 byte item on stack
+  case PUSH26 // 0x79 Place 26 byte item on stack
+  case PUSH27 // 0x7A Place 27 byte item on stack
+  case PUSH28 // 0x7B Place 28 byte item on stack
+  case PUSH29 // 0x7C Place 29 byte item on stack
+  case PUSH30 // 0x7D Place 30 byte item on stack
+  case PUSH31 // 0x7E Place 31 byte item on stack
+  case PUSH32 // 0x7F Place 32 byte item on stack
+
+  case DUP1 // Duplicate 1st stack item
+  case DUP2 // Duplicate 2nd stack item
+  case DUP3 // Duplicate 3rd stack item
+  case DUP4 // Duplicate 4th stack item
+  case DUP5 // Duplicate 5th stack item
+  case DUP6 // Duplicate 6th stack item
+  case DUP7 // Duplicate 7th stack item
+  case DUP8 // Duplicate 8th stack item
+  case DUP9 // Duplicate 9th stack item
+  case DUP10 // Duplicate 10th stack item
+  case DUP11 // Duplicate 11th stack item
+  case DUP12 // Duplicate 12th stack item
+  case DUP13 // Duplicate 13th stack item
+  case DUP14 // Duplicate 14th stack item
+  case DUP15 // Duplicate 15th stack item
+  case DUP16 // Duplicate 16th stack item
+
+  case SWAP1 // Exchange 1st and 2nd stack items
+  case SWAP2 // Exchange 1st and 3rd stack items
+  case SWAP3 // Exchange 1st and 4th stack items
+  case SWAP4 // Exchange 1st and 5th stack items
+  case SWAP5 // Exchange 1st and 6th stack items
+  case SWAP6 // Exchange 1st and 7th stack items
+  case SWAP7 // Exchange 1st and 8th stack items
+  case SWAP8 // Exchange 1st and 9th stack items
+  case SWAP9 // Exchange 1st and 10th stack items
+  case SWAP10 // Exchange 1st and 11th stack items
+  case SWAP12 // Exchange 1st and 13th stack items
+  case SWAP11 // Exchange 1st and 12th stack items
+  case SWAP13 // Exchange 1st and 14th stack items
+  case SWAP14 // Exchange 1st and 15th stack items
+  case SWAP15 // Exchange 1st and 16th stack items
+  case SWAP16 // Exchange 1st and 17th stack items
+
+  case LOG0 // Append log record with no topics
+  case LOG1 // Append log record with one topic
+  case LOG2 // Append log record with two topics
+  case LOG4 // 0xA4 Append log record with four topics
+  case LOG3 // log record with three topics
+
+  case CREATE // Create a new account with associated code
+  case CALL // Message-call into an account
+  case CALLCODE  // Message-call into this account with alternative account's code
+  case RETURN // Halt execution returning output data
+  case DELEGATECALL // Message-call with an alternative account's code, persisting sender and value
+  case CREATE2 // Create a new account with associated code at a predictable address
+  case STATICCALL // Static message-call into an account
+  case REVERT // Halt execution reverting state changes but returning data and remaining gas
+  case INVALID // Designated invalid instruction
+  case SELFDESTRUCT // Halt execution and register account for later deletion
+
+object Opcode:
+  def hex(op: Opcode): Int = op match
+  case Opcode.STOP => 0x00
+  case Opcode.ADD => 0x01
+  case Opcode.MUL => 0x02
+  case Opcode.SUB => 0x03
+  case Opcode.DIV => 0x04
+  case Opcode.SDIV => 0x05
+  case Opcode.MOD => 0x06
+  case Opcode.SMOD => 0x07
+  case Opcode.ADDMOD => 0x08
+  case Opcode.MULMOD => 0x09
+  case Opcode.EXP => 0x0A
+  case Opcode.SIGNEXTEND => 0x0B
+  case Opcode.LT => 0x10
+  case Opcode.GT => 0x11
+  case Opcode.SLT => 0x12
+  case Opcode.SGT => 0x13
+  case Opcode.EQ => 0x14
+  case Opcode.ISZERO => 0x15
+  case Opcode.AND => 0x16
+  case Opcode.OR => 0x17
+  case Opcode.XOR => 0x18
+  case Opcode.NOT => 0x19
+  case Opcode.BYTE => 0x1A
+  case Opcode.SHL => 0x1B
+  case Opcode.SHR => 0x1C
+  case Opcode.SAR => 0x1D
+  case Opcode.CLZ => 0x1E
+  case Opcode.KECCAK256 => 0x20
+  case Opcode.ADDRESS => 0x30
+  case Opcode.BALANCE => 0x31
+  case Opcode.ORIGIN => 0x32
+  case Opcode.CALLER => 0x33
+  case Opcode.CALLVALUE => 0x34
+  case Opcode.CALLDATALOAD => 0x35
+  case Opcode.CALLDATASIZE => 0x36
+  case Opcode.CALLDATACOPY => 0x37
+  case Opcode.CODESIZE => 0x38
+  case Opcode.CODECOPY => 0x39
+  case Opcode.GASPRICE => 0x3A
+  case Opcode.EXTCODESIZE => 0x3B
+  case Opcode.EXTCODECOPY => 0x3C
+  case Opcode.RETURNDATASIZE => 0x3D
+  case Opcode.RETURNDATACOPY => 0x3E
+  case Opcode.EXTCODEHASH => 0x3F
+  case Opcode.BLOCKHASH => 0x40
+  case Opcode.COINBASE => 0x41
+  case Opcode.TIMESTAMP => 0x42
+  case Opcode.NUMBER => 0x43
+  case Opcode.PREVRANDAO => 0x44
+  case Opcode.GASLIMIT => 0x45
+  case Opcode.CHAINID => 0x46
+  case Opcode.SELFBALANCE => 0x47
+  case Opcode.BASEFEE => 0x48
+  case Opcode.BLOBHASH => 0x49
+  case Opcode.BLOBBASEFEE => 0x4A
+  case Opcode.POP => 0x50
+  case Opcode.MLOAD => 0x51
+  case Opcode.MSTORE => 0x52
+  case Opcode.MSTORE8 => 0x53
+  case Opcode.SLOAD => 0x54
+  case Opcode.SSTORE => 0x55
+  case Opcode.JUMP => 0x56
+  case Opcode.JUMPI => 0x57
+  case Opcode.PC => 0x58
+  case Opcode.MSIZE => 0x59
+  case Opcode.GAS => 0x5A
+  case Opcode.JUMPDEST => 0x5B
+  case Opcode.TLOAD => 0x5C
+  case Opcode.TSTORE => 0x5D
+  case Opcode.MCOPY => 0x5E
+  case Opcode.PUSH0 => 0x5F
+  case Opcode.PUSH1 => 0x60
+  case Opcode.PUSH2 => 0x61
+  case Opcode.PUSH3 => 0x62
+  case Opcode.PUSH4 => 0x63
+  case Opcode.PUSH5 => 0x64
+  case Opcode.PUSH6 => 0x65
+  case Opcode.PUSH7 => 0x66
+  case Opcode.PUSH8 => 0x67
+  case Opcode.PUSH9 => 0x68
+  case Opcode.PUSH10 => 0x69
+  case Opcode.PUSH11 => 0x6A
+  case Opcode.PUSH12 => 0x6B
+  case Opcode.PUSH13 => 0x6C
+  case Opcode.PUSH14 => 0x6D
+  case Opcode.PUSH15 => 0x6E
+  case Opcode.PUSH16 => 0x6F
+  case Opcode.PUSH17 => 0x70
+  case Opcode.PUSH18 => 0x71
+  case Opcode.PUSH19 => 0x72
+  case Opcode.PUSH20 => 0x73
+  case Opcode.PUSH21 => 0x74
+  case Opcode.PUSH22 => 0x75
+  case Opcode.PUSH23 => 0x76
+  case Opcode.PUSH24 => 0x77
+  case Opcode.PUSH25 => 0x78
+  case Opcode.PUSH26 => 0x79
+  case Opcode.PUSH27 => 0x7A
+  case Opcode.PUSH28 => 0x7B
+  case Opcode.PUSH29 => 0x7C
+  case Opcode.PUSH30 => 0x7D
+  case Opcode.PUSH31 => 0x7E
+  case Opcode.PUSH32 => 0x7F
+  case Opcode.DUP1 => 0x80
+  case Opcode.DUP2 => 0x81
+  case Opcode.DUP3 => 0x82
+  case Opcode.DUP4 => 0x83
+  case Opcode.DUP5 => 0x84
+  case Opcode.DUP6 => 0x85
+  case Opcode.DUP7 => 0x86
+  case Opcode.DUP8 => 0x87
+  case Opcode.DUP9 => 0x88
+  case Opcode.DUP10 => 0x89
+  case Opcode.DUP11 => 0x8A
+  case Opcode.DUP12 => 0x8B
+  case Opcode.DUP13 => 0x8C
+  case Opcode.DUP14 => 0x8D
+  case Opcode.DUP15 => 0x8E
+  case Opcode.DUP16 => 0x8F
+  case Opcode.SWAP1 => 0x90
+  case Opcode.SWAP2 => 0x91
+  case Opcode.SWAP3 => 0x92
+  case Opcode.SWAP4 => 0x93
+  case Opcode.SWAP5 => 0x94
+  case Opcode.SWAP6 => 0x95
+  case Opcode.SWAP7 => 0x96
+  case Opcode.SWAP8 => 0x97
+  case Opcode.SWAP9 => 0x98
+  case Opcode.SWAP10 => 0x99
+  case Opcode.SWAP11 => 0x9A
+  case Opcode.SWAP12 => 0x9B
+  case Opcode.SWAP13 => 0x9C
+  case Opcode.SWAP14 => 0x9D
+  case Opcode.SWAP15 => 0x9E
+  case Opcode.SWAP16 => 0x9F
+  case Opcode.LOG0 => 0xA0
+  case Opcode.LOG1 => 0xA1
+  case Opcode.LOG2 => 0xA2
+  case Opcode.LOG3 => 0xA3
+  case Opcode.LOG4 => 0xA4
+  case Opcode.CREATE => 0xF0
+  case Opcode.CALL => 0xF1
+  case Opcode.CALLCODE => 0xF2
+  case Opcode.RETURN => 0xF3
+  case Opcode.DELEGATECALL => 0xF4
+  case Opcode.CREATE2 => 0xF5
+  case Opcode.STATICCALL => 0xFA
+  case Opcode.REVERT => 0xFD
+  case Opcode.INVALID => 0xFE
+  case Opcode.SELFDESTRUCT => 0xFF
