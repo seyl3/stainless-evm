@@ -41,12 +41,15 @@ proofs/src/main/scala/evm/proofs/
   EvmMath.scala                Pure BigInt number-system layer: modulus, exponentiation, signed interpretation, bounds, and their lemmas
   Bitwise.scala                Bitwise and/or/xor as trusted @extern functions with assumed algebraic axioms; not is verified
 core/src/main/scala/evm/core/
-  Word256.scala                The 256-bit EVM word with verified arithmetic, bitwise, shift, and signed operations
+  Word256.scala                The 256-bit EVM word with verified arithmetic, bitwise, shift, signed, and comparison operations
 evm/src/main/scala/evm/
-  Stack.scala                  The 1024-item EVM stack (push, pop), verified to respect the depth bound
+  Stack.scala                  The 1024-item EVM stack (push, pop, peek, dup, swap), verified to respect the depth bound
   Memory.scala                 Byte-addressable EVM memory (in progress)
+evm/src/test/scala/evm/
+  core/Word256Suite.scala      munit unit tests for Word256
+  StackSuite.scala             munit unit tests for Stack
 build.sbt                      Build and Stainless wiring; source roots keep each module one verification unit
-.github/workflows/verify.yml   CI: compile and run Stainless verification on push and pull request
+.github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
 ```
 
 ## Verification approach: lemmas and axioms
