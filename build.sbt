@@ -5,6 +5,7 @@ lazy val commonSettings = Seq(
   version := "0.1.0-SNAPSHOT",
   resolvers += MavenRepository("stainless-local", s"file://${(ThisBuild / baseDirectory).value.getAbsolutePath}/stainless"),
   scalacOptions += "-Wconf:src=.*stainless-library.*:s",
+  libraryDependencies += "org.scalameta" %% "munit" % "1.3.2" % Test,
 )
 lazy val core = project
   .in(file("core"))
@@ -16,10 +17,6 @@ lazy val core = project
       (ThisBuild / baseDirectory).value / "proofs" / "src" / "main" / "scala",
   )
 
-// `evm` references `core` types (e.g. Word256 fields in Stack), and Stainless
-// extracts cross-module references from source, not bytecode. So `evm` compiles
-// proofs + core sources directly instead of `dependsOn(core)` (which would only
-// share bytecode and also double-define the classes).
 lazy val evm = project
   .in(file("evm"))
   .enablePlugins(StainlessPlugin)
@@ -38,5 +35,4 @@ lazy val root = project
   .settings(
     name := "stainless-evm",
     commonSettings,
-    libraryDependencies += "org.scalameta" %% "munit" % "1.3.2" % Test,
   )
