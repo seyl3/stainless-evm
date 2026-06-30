@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  stainless:
+  verify:
     runs-on: ubuntu-latest
     env:
       STAINLESS_VERSION: "0.9.9.3"
@@ -45,50 +45,11 @@ jobs:
             test -f "$PLUGIN_JAR" || { echo "::error::plugin jar missing after unzip"; exit 1; }
           fi
 
-      - name: Compile and verify
+      - name: Verify and test
         run: |
           set -o pipefail
-          sbt evm/compile 2>&1 | tee verify.log
+          sbt "evm/compile" "evm/test" 2>&1 | tee verify.log
           if grep -qE '=> (INVALID|UNKNOWN|TIMEOUT|CANCELLED)' verify.log; then
             echo "::error::Stainless reported non-valid verification conditions"
             exit 1
           fi
-
-  test:
-    runs-on: ubuntu-latest
-    env:
-      STAINLESS_VERSION: "0.9.9.3"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: sbt
-
-      - uses: sbt/setup-sbt@v1
-
-      - name: Install z3
-        run: sudo apt-get update && sudo apt-get install -y z3
-
-      - name: Cache Stainless compiler plugin
-        uses: actions/cache@v4
-        with:
-          path: stainless/ch/epfl/lara/stainless-dotty-plugin_3.7.2
-          key: stainless-plugin-${{ env.STAINLESS_VERSION }}
-
-      - name: Fetch Stainless plugin (on cache miss)
-        run: |
-          PLUGIN_JAR="stainless/ch/epfl/lara/stainless-dotty-plugin_3.7.2/${STAINLESS_VERSION}/stainless-dotty-plugin_3.7.2-${STAINLESS_VERSION}.jar"
-          if [ -f "$PLUGIN_JAR" ]; then
-            echo "Plugin restored from cache: $PLUGIN_JAR"
-          else
-            curl -fsSL -o sbt-stainless.zip \
-              "https://github.com/epfl-lara/stainless/releases/download/v${STAINLESS_VERSION}/sbt-stainless.zip"
-            unzip -o -q sbt-stainless.zip
-            test -f "$PLUGIN_JAR" || { echo "::error::plugin jar missing after unzip"; exit 1; }
-          fi
-
-      - name: Run unit tests
-        run: sbt "core/compile" "evm/compile" "core/test" "evm/test"
