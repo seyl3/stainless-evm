@@ -121,7 +121,7 @@ case class Word256(value: BigInt) {
     result.value == pow(value, exp.value) % MODULO
     && inBounds(result.value))
 
-  def <<(shift: Word256): Word256 = {
+  def shl(shift: Word256): Word256 = {
     EvmMath.powNonNeg(BigInt(2), shift.value)
     if (shift.value >= BigInt(256)) Word256.Zero
     else Word256((value * pow(BigInt(2), shift.value)) % MODULO)
@@ -130,13 +130,68 @@ case class Word256(value: BigInt) {
      else result.value == (value * pow(BigInt(2), shift.value)) % MODULO)
     && inBounds(result.value))
 
-  def >>(shift: Word256): Word256 = {
+  def shr(shift: Word256): Word256 = {
     EvmMath.powTwoPos(shift.value)
     if (shift.value >= BigInt(256)) Word256.Zero
     else Word256(value / pow(BigInt(2), shift.value))
   }.ensuring(result =>
     (if (shift.value >= BigInt(256)) result.value == BigInt(0)
      else result.value == value / pow(BigInt(2), shift.value))
+    && inBounds(result.value))
+
+  def sar(shift: Word256): Word256 = {
+    EvmMath.moduloPos
+    if (shift.value >= BigInt(256))
+      (if (EvmMath.toSigned(value) >= 0) Word256.Zero else Word256(MAX_VALUE))
+    else {
+      EvmMath.powTwoPos(shift.value)
+      Word256(EvmMath.wrap(EvmMath.floorDiv(EvmMath.toSigned(value), pow(BigInt(2), shift.value))))
+    }
+  }.ensuring(result =>
+    (if (shift.value >= BigInt(256))
+       (if (EvmMath.toSigned(value) >= 0) result.value == BigInt(0) else result.value == MAX_VALUE)
+     else result.value == EvmMath.wrap(EvmMath.floorDiv(EvmMath.toSigned(value), pow(BigInt(2), shift.value))))
+    && inBounds(result.value))
+
+  def byte(i: Word256): Word256 = {
+    if (i.value >= BigInt(32)) Word256.Zero
+    else {
+      val sh = BigInt(8) * (BigInt(31) - i.value)
+      EvmMath.powTwoPos(sh)
+      EvmMath.powTwoPos(BigInt(8))
+      EvmMath.powMonotone(BigInt(8), BigInt(256))
+      Word256((value / pow(BigInt(2), sh)) % pow(BigInt(2), BigInt(8)))
+    }
+  }.ensuring(result =>
+    (if (i.value >= BigInt(32)) result.value == BigInt(0)
+     else result.value == (value / pow(BigInt(2), BigInt(8) * (BigInt(31) - i.value))) % pow(BigInt(2), BigInt(8)))
+    && inBounds(result.value))
+
+  def signextend(b: Word256): Word256 = {
+    if (b.value >= BigInt(31)) this
+    else {
+      val bits = BigInt(8) * (b.value + 1)
+      EvmMath.powTwoPos(bits)
+      EvmMath.powTwoPos(bits - 1)
+      EvmMath.powMonotone(bits, BigInt(256))
+      val m   = pow(BigInt(2), bits)
+      val low = value % m
+      val sign = (value / pow(BigInt(2), bits - 1)) % 2
+      Word256(if (sign == 1) low + (MODULO - m) else low)
+    }
+  }.ensuring(result =>
+    (if (b.value >= BigInt(31)) result.value == value
+     else result.value ==
+       (if ((value / pow(BigInt(2), BigInt(8) * (b.value + 1) - 1)) % 2 == 1)
+          (value % pow(BigInt(2), BigInt(8) * (b.value + 1))) + (MODULO - pow(BigInt(2), BigInt(8) * (b.value + 1)))
+        else value % pow(BigInt(2), BigInt(8) * (b.value + 1))))
+    && inBounds(result.value))
+
+  def clz: Word256 = {
+    EvmMath.n256InBounds
+    Word256(EvmMath.clzWidth(value, BigInt(256)))
+  }.ensuring(result =>
+    result.value == EvmMath.clzWidth(value, BigInt(256))
     && inBounds(result.value))
 
   def isZero: Boolean = value == BigInt(0)
