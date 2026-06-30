@@ -6,6 +6,8 @@ import evm.core.Word256
 
 object Stack {
     val MAXIMUM_STACK_SIZE: BigInt = 1024
+
+    def empty: Stack = Stack(Nil())
 }
 
 case class Stack(data: List[Word256]) {
