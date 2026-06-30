@@ -30,6 +30,19 @@ object EvmMath {
     ((s % MODULO) + MODULO) % MODULO
   }.ensuring(r => r >= 0 && r < MODULO)
 
+  def floorDiv(a: BigInt, b: BigInt): BigInt = {
+    require(b > 0)
+    val q = a / b
+    if (a >= 0 || q * b == a) q else q - 1
+  }.ensuring(r => r * b <= a && a < (r + 1) * b)
+
+  def clzWidth(v: BigInt, width: BigInt): BigInt = {
+    require(v >= 0 && width >= 0 && v < pow(BigInt(2), width))
+    decreases(width)
+    if (width == 0) BigInt(0)
+    else if (v >= pow(BigInt(2), width - 1)) BigInt(0)
+    else 1 + clzWidth(v, width - 1)
+  }.ensuring(r => 0 <= r && r <= width)
 
   @ghost
   def powNonNeg(base: BigInt, exp: BigInt): Boolean = {
@@ -80,5 +93,21 @@ object EvmMath {
     require(s >= -SIGN_BOUND && s < SIGN_BOUND)
     signBoundDoubles
     toSigned(wrap(s)) == s
+  }.holds
+
+  @ghost
+  def powMonotone(a: BigInt, b: BigInt): Boolean = {
+    require(0 <= a && a <= b)
+    decreases(b - a)
+    pow(BigInt(2), a) <= pow(BigInt(2), b) because {
+      if (a == b) trivial
+      else powMonotone(a, b - 1) && powTwoPos(b - 1)
+    }
+  }.holds
+
+  @ghost
+  def n256InBounds: Boolean = {
+    inBounds(BigInt(256)) because
+      (powMonotone(BigInt(9), BigInt(256)) && pow(BigInt(2), BigInt(9)) == 512)
   }.holds
 }
