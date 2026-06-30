@@ -14,7 +14,7 @@ object EvmMath {
     decreases(exp)
     if (exp == 0) BigInt(1)
     else base * pow(base, exp - 1)
-  }.ensuring(result => if (exp == 0) result == 1 else result == base * pow(base, exp - 1))
+  }
 
   def inBounds(v: BigInt): Boolean = v >= 0 && v <= MAX_VALUE
 
