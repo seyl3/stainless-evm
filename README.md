@@ -51,6 +51,7 @@ evm/src/main/scala/evm/
   Storage.scala                Persistent/transient key-value store (load, store) for SLOAD/SSTORE and TLOAD/TSTORE
   Opcode.scala                 Opcode enum (all ~150 opcodes with hex and descriptions), hex/decode and per-opcode base gas
   Code.scala                   Bytecode wrapper: byte/opcode access by position and verified JUMPDEST analysis (valid jump targets)
+  ExecState.scala              Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data
 evm/src/test/scala/evm/
   core/Word256Suite.scala      munit unit tests for Word256
   StackSuite.scala             munit unit tests for Stack
@@ -59,6 +60,7 @@ evm/src/test/scala/evm/
   GasSuite.scala               munit unit tests for the gas formulas
   OpcodeSuite.scala            munit unit tests for opcode hex, base gas and decode
   CodeSuite.scala              munit unit tests for the bytecode wrapper
+  ExecStateSuite.scala         munit unit tests for the execution state
 build.sbt                      Build and Stainless wiring; source roots keep each module one verification unit
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
 ```
