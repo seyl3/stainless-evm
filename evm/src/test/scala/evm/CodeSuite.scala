@@ -30,4 +30,26 @@ class CodeSuite extends munit.FunSuite {
     val c = code(0x0C)
     assertEquals(c.opcodeAt(0), None())
   }
+
+  test("a real JUMPDEST is a valid jump destination") {
+    val c = code(0x5B)
+    assert(c.isValidJumpDest(0))
+  }
+
+  test("a 0x5B inside PUSH data is not a valid jump destination") {
+    val c = code(0x60, 0x5B)
+    assert(!c.isValidJumpDest(0))
+    assert(!c.isValidJumpDest(1))
+  }
+
+  test("analysis skips push immediates to find the real JUMPDEST") {
+    val c = code(0x60, 0x5B, 0x5B)
+    assert(!c.isValidJumpDest(1))
+    assert(c.isValidJumpDest(2))
+  }
+
+  test("no valid jump destinations in empty or plain code") {
+    assert(!Code.empty.isValidJumpDest(0))
+    assert(!code(0x01, 0x02).isValidJumpDest(0))
+  }
 }
