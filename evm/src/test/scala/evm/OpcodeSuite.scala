@@ -27,17 +27,17 @@ class OpcodeSuite extends munit.FunSuite {
   }
 
   test("decode maps a byte to its opcode, None for undefined bytes") {
-    assertEquals(Opcode.decode(0x00), Some(Opcode.STOP))
-    assertEquals(Opcode.decode(0x01), Some(Opcode.ADD))
-    assertEquals(Opcode.decode(0x60), Some(Opcode.PUSH1))
-    assertEquals(Opcode.decode(0xFF), Some(Opcode.SELFDESTRUCT))
-    assertEquals(Opcode.decode(0x0C), None())
-    assertEquals(Opcode.decode(0x21), None())
-    assertEquals(Opcode.decode(0xF6), None())
+    assertEquals(Opcode.decode(BigInt(0x00)), Some(Opcode.STOP))
+    assertEquals(Opcode.decode(BigInt(0x01)), Some(Opcode.ADD))
+    assertEquals(Opcode.decode(BigInt(0x60)), Some(Opcode.PUSH1))
+    assertEquals(Opcode.decode(BigInt(0xFF)), Some(Opcode.SELFDESTRUCT))
+    assertEquals(Opcode.decode(BigInt(0x0C)), None())
+    assertEquals(Opcode.decode(BigInt(0x21)), None())
+    assertEquals(Opcode.decode(BigInt(0xF6)), None())
   }
 
   test("decode is the inverse of hex") {
     for op <- List(Opcode.STOP, Opcode.ADD, Opcode.PUSH32, Opcode.MCOPY, Opcode.CLZ, Opcode.SELFDESTRUCT) do
-      assertEquals(Opcode.decode(Opcode.hex(op)), Some(op))
+      assertEquals(Opcode.decode(BigInt(Opcode.hex(op))), Some(op))
   }
 }
