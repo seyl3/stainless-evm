@@ -236,8 +236,50 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(s.stack.peek(0).value, BigInt(0))
   }
 
+  test("JUMP to a valid JUMPDEST continues there") {
+    val s = run(1000, 0x60, 0x04, 0x56, 0x00, 0x5B, 0x60, 0x2A, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(0x2A))
+  }
+
+  test("JUMP to a non-JUMPDEST fails") {
+    val s = run(1000, 0x60, 0x01, 0x56, 0x00)
+    assertEquals(s.status, Status.Failed)
+  }
+
+  test("JUMPI branches when the condition is nonzero") {
+    val s = run(1000, 0x60, 0x01, 0x60, 0x06, 0x57, 0x00, 0x5B, 0x60, 0x2A, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(0x2A))
+  }
+
+  test("JUMPI falls through when the condition is zero") {
+    val s = run(1000, 0x60, 0x00, 0x60, 0x06, 0x57, 0x60, 0x63, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(0x63))
+  }
+
+  test("RETURN halts and REVERT reverts") {
+    val ret = run(1000, 0x60, 0x00, 0x60, 0x00, 0xF3)
+    assertEquals(ret.status, Status.Halted)
+    val rev = run(1000, 0x60, 0x00, 0x60, 0x00, 0xFD)
+    assertEquals(rev.status, Status.Reverted)
+  }
+
+  test("REVERT keeps remaining gas while an exceptional halt consumes it all") {
+    val rev = run(1000, 0x60, 0x00, 0x60, 0x00, 0xFD)
+    assert(rev.gas > BigInt(0))
+    val bad = run(1000, 0xF1)
+    assertEquals(bad.gas, BigInt(0))
+  }
+
+  test("a backward JUMP loop terminates by running out of gas") {
+    val s = run(100, 0x5B, 0x60, 0x00, 0x56)
+    assertEquals(s.status, Status.Failed)
+  }
+
   test("an unsupported opcode fails") {
-    val s = run(1000, 0xF3)
+    val s = run(1000, 0xF1)
     assertEquals(s.status, Status.Failed)
   }
 }
