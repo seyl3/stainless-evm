@@ -2,6 +2,8 @@ package evm
 
 import stainless.collection.*
 import stainless.lang.*
+import stainless.annotation.*
+import stainless.proof.*
 import evm.core.Word256
 import evm.proofs.Collections
 
@@ -55,4 +57,16 @@ case class Stack(data: List[Word256]) {
         result.data.size == data.size
         && result.data(0) == data(n)
         && result.data(n) == data(0))
+
+    @ghost
+    def swapPreservesOther(n: BigInt, k: BigInt): Boolean = {
+        require(n >= 1 && n < data.size && 0 <= k && k < data.size && k != 0 && k != n)
+        val nth = data(n)
+        val top = data(0)
+        val a = data.updated(0, nth)
+        (swap(n).data(k) == data(k)) because {
+            Collections.updatedApplyOther(a, n, k, top) &&
+            Collections.updatedApplyOther(data, 0, k, nth)
+        }
+    }.holds
 }
