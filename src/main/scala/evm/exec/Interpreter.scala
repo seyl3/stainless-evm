@@ -319,6 +319,49 @@ object Interpreter:
           }
         }
 
+      case Opcode.TLOAD =>
+        if (s1.stack.data.isEmpty) s1.fail
+        else {
+          val (k, t) = s1.stack.pop()
+          s1.copy(stack = t.push(s1.transient.load(k))).advancePc(1)
+        }
+
+      case Opcode.TSTORE =>
+        if (s1.static || s1.stack.data.size < 2) s1.fail
+        else {
+          val (k, t1) = s1.stack.pop()
+          val (v, t2) = t1.pop()
+          s1.copy(stack = t2, transient = s1.transient.store(k, v)).advancePc(1)
+        }
+
+      case Opcode.SLOAD =>
+        if (s1.stack.data.isEmpty) s1.fail
+        else {
+          val (k, t) = s1.stack.pop()
+          val extra = if (s1.accessedSlots.contains(k)) BigInt(0) else BigInt(2000)
+          if (s1.outOfGas(extra)) s1.fail
+          else {
+            val s2 = s1.chargeGas(extra)
+            s2.copy(stack = t.push(s2.storage.load(k)),
+                    accessedSlots = s2.accessedSlots ++ Set(k)).advancePc(1)
+          }
+        }
+
+      case Opcode.SSTORE =>
+        if (s1.static || s1.stack.data.size < 2 || s1.gas + 100 <= 2300) s1.fail
+        else {
+          val (k, t1) = s1.stack.pop()
+          val (v, t2) = t1.pop()
+          val cold = !s1.accessedSlots.contains(k)
+          val extra = Gas.sstoreCost(s1.original.load(k).value, s1.storage.load(k).value, v.value, cold) - 100
+          if (s1.outOfGas(extra)) s1.fail
+          else {
+            val s2 = s1.chargeGas(extra)
+            s2.copy(stack = t2, storage = s2.storage.store(k, v),
+                    accessedSlots = s2.accessedSlots ++ Set(k)).advancePc(1)
+          }
+        }
+
       case _ => s1.fail
   }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))
 
