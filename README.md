@@ -1,6 +1,6 @@
 # stainless-evm
 
-Formally verified EVM implementation targeting the Osaka execution layer spec, written in Scala 3 with [Stainless](https://epfl-lara.github.io/stainless/).
+Formally verified EVM implementation targeting the [Osaka](https://eips.ethereum.org/EIPS/eip-7607) execution layer spec, written in Scala 3 with [Stainless](https://epfl-lara.github.io/stainless/).
 
 ## Requirements
 
