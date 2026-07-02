@@ -42,7 +42,10 @@ object EvmMath {
     if (width == 0) BigInt(0)
     else if (v >= pow(BigInt(2), width - 1)) BigInt(0)
     else 1 + clzWidth(v, width - 1)
-  }.ensuring(r => 0 <= r && r <= width)
+  }.ensuring(r =>
+    0 <= r && r <= width
+    && v < pow(BigInt(2), width - r)
+    && (r < width ==> v >= pow(BigInt(2), width - r - 1)))
 
   @ghost
   def powNonNeg(base: BigInt, exp: BigInt): Boolean = {
