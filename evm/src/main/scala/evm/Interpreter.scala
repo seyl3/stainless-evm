@@ -2,8 +2,16 @@ package evm
 
 import stainless.lang.*
 import evm.core.Word256
+import evm.proofs.Gas
+import evm.proofs.EvmMath
+import evm.proofs.EvmMath.MAX_VALUE
 
 object Interpreter:
+
+  def memExpandCost(st: ExecState, end: BigInt): BigInt = {
+    require(end >= 0)
+    Gas.memoryExpansionCost(st.memory.size / 32, st.memory.expandedTo(end) / 32)
+  }.ensuring(r => r >= 0)
 
   def unop(st: ExecState, f: Word256 => Word256): ExecState = {
     if (st.stack.data.isEmpty) st.fail
@@ -95,7 +103,13 @@ object Interpreter:
       case Opcode.SDIV => binop(s1, (a, b) => a.sdiv(b))
       case Opcode.MOD => binop(s1, (a, b) => a % b)
       case Opcode.SMOD => binop(s1, (a, b) => a.smod(b))
-      case Opcode.EXP => binop(s1, (a, b) => a ** b)
+      case Opcode.EXP =>
+        if (s1.stack.data.size < 2) s1.fail
+        else {
+          val extra = 50 * EvmMath.byteLength(s1.stack.data.tail.head.value)
+          if (s1.outOfGas(extra)) s1.fail
+          else binop(s1.chargeGas(extra), (a, b) => a ** b)
+        }
       case Opcode.SIGNEXTEND => binop(s1, (a, b) => b.signextend(a))
 
       case Opcode.LT => binop(s1, (a, b) => if (a.lt(b)) Word256.One else Word256.Zero)
@@ -186,8 +200,57 @@ object Interpreter:
       case Opcode.SWAP15 => swapN(s1, 15)
       case Opcode.SWAP16 => swapN(s1, 16)
 
+      case Opcode.MSIZE =>
+        if (s1.stack.data.size >= Stack.MAXIMUM_STACK_SIZE || s1.memory.size > MAX_VALUE) s1.fail
+        else s1.copy(stack = s1.stack.push(Word256(s1.memory.size))).advancePc(1)
+
+      case Opcode.MLOAD =>
+        if (s1.stack.data.isEmpty) s1.fail
+        else {
+          val (o, t) = s1.stack.pop()
+          val extra = memExpandCost(s1, o.value + 32)
+          if (s1.outOfGas(extra)) s1.fail
+          else {
+            val s2 = s1.chargeGas(extra)
+            s2.copy(stack = t.push(s2.memory.load(o.value)),
+                    memory = s2.memory.expand(o.value + 32)).advancePc(1)
+          }
+        }
+
+      case Opcode.MSTORE =>
+        if (s1.stack.data.size < 2) s1.fail
+        else {
+          val (o, t1) = s1.stack.pop()
+          val (v, t2) = t1.pop()
+          val extra = memExpandCost(s1, o.value + 32)
+          if (s1.outOfGas(extra)) s1.fail
+          else s1.chargeGas(extra).copy(stack = t2, memory = s1.memory.store(o.value, v)).advancePc(1)
+        }
+
+      case Opcode.MSTORE8 =>
+        if (s1.stack.data.size < 2) s1.fail
+        else {
+          val (o, t1) = s1.stack.pop()
+          val (v, t2) = t1.pop()
+          val extra = memExpandCost(s1, o.value + 1)
+          if (s1.outOfGas(extra)) s1.fail
+          else s1.chargeGas(extra).copy(stack = t2, memory = s1.memory.store8(o.value, v)).advancePc(1)
+        }
+
+      case Opcode.MCOPY =>
+        if (s1.stack.data.size < 3) s1.fail
+        else {
+          val (d, t1) = s1.stack.pop()
+          val (sr, t2) = t1.pop()
+          val (l, t3) = t2.pop()
+          val end = if (d.value > sr.value) d.value + l.value else sr.value + l.value
+          val extra = if (l.value == 0) BigInt(0) else 3 * Gas.words(l.value) + memExpandCost(s1, end)
+          if (s1.outOfGas(extra)) s1.fail
+          else s1.chargeGas(extra).copy(stack = t3, memory = s1.memory.mcopy(d.value, sr.value, l.value)).advancePc(1)
+        }
+
       case _ => s1.fail
-  }.ensuring(r => !r.isRunning || (r.gas == s1.gas && Opcode.baseGas(op) >= 1))
+  }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))
 
   def step(s: ExecState): ExecState = {
 
