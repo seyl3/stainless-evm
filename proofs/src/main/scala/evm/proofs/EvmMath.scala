@@ -146,4 +146,20 @@ object EvmMath {
     pow(BigInt(256), BigInt(32)) == MODULO because
       (powPow(BigInt(2), BigInt(8), BigInt(32)) && pow(BigInt(2), BigInt(8)) == 256)
   }.holds
+
+  @ghost
+  def powMono(base: BigInt, a: BigInt, b: BigInt): Boolean = {
+    require(base >= 1 && 0 <= a && a <= b)
+    decreases(b - a)
+    pow(base, a) <= pow(base, b) because {
+      if (a == b) trivial
+      else powMono(base, a, b - 1) && powPos(base, b - 1)
+    }
+  }.holds
+
+  @ghost
+  def pow256Le(n: BigInt): Boolean = {
+    require(0 <= n && n <= 32)
+    pow(BigInt(256), n) <= MODULO because (powMono(BigInt(256), n, BigInt(32)) && pow256_32)
+  }.holds
 }
