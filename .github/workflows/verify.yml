@@ -55,7 +55,7 @@ jobs:
       - name: Verify and test
         run: |
           set -o pipefail
-          sbt "evm/compile" "evm/test" 2>&1 | tee verify.log
+          sbt compile test 2>&1 | tee verify.log
           if grep -qE '=> (INVALID|UNKNOWN|TIMEOUT|CANCELLED)' verify.log; then
             echo "::error::Stainless reported non-valid verification conditions"
             exit 1
