@@ -21,9 +21,14 @@ This populates `project/lib/sbt-stainless.jar` and `stainless/` (the local Maven
 ## Build and verify
 
 ```
-sbt core/compile    # verify and compile core 
-sbt evm/compile     # verify and compile evm 
-sbt compile         # both
+sbt compile         # verify and compile the whole tree
+sbt test            # run the unit tests
+```
+
+To verify only a subset of functions during iteration, use Stainless function filtering, for example:
+
+```
+sbt "set every stainlessExtraOptions ++= Seq(\"--functions=evm.value._\")" compile
 ```
 
 Stainless verification runs automatically on every compile. Each function annotated with `require`/`ensuring` produces verification conditions that are discharged by the SMT solver. The summary at the end of compilation shows valid/invalid/unknown counts.
@@ -36,40 +41,43 @@ sbt "set every stainlessEnabled := false" compile
 
 ## Project structure
 
+The whole tree is a single sbt project (one verification unit, one target). Since
+every verified type cross-references the others (Word256 uses EvmMath, the
+interpreter uses everything), Stainless requires them in one compilation unit
+anyway, so the code is organized by package rather than by sbt module.
+
 ```
-proofs/src/main/scala/evm/proofs/   Pure helper functions and all @ghost lemmas, by subject (no EVM-type references)
-  EvmMath.scala                Number theory: modulus, exponentiation, signed interpretation, bounds, and their lemmas
-  Bitwise.scala                Bitwise and/or/xor as trusted @extern functions with assumed algebraic axioms; not is verified
-  Collections.scala            Generic List/Map lemmas (for example updated preserves other indices)
-  Bytes.scala                  Byte-array packing over Map: readBytes/writeBytes/copyBytes plus framing and round-trip lemmas
-  Gas.scala                    Pure gas pricing formulas (memory expansion, copy, keccak, exp, log, access, sstore) with non-negativity lemmas
-core/src/main/scala/evm/core/
-  Word256.scala                The 256-bit EVM word with verified arithmetic, bitwise, shift, signed, and comparison operations
-evm/src/main/scala/evm/
-  Stack.scala                  The 1024-item EVM stack (push, pop, peek, dup, swap), verified to respect the depth bound
-  Memory.scala                 Byte-addressable EVM memory (load, store, store8, mcopy, msize, expand), with proven write/read round-trips
-  Storage.scala                Persistent/transient key-value store (load, store) for SLOAD/SSTORE and TLOAD/TSTORE
-  Opcode.scala                 Opcode enum (all ~150 opcodes with hex and descriptions), hex/decode and per-opcode base gas
-  Code.scala                   Bytecode wrapper: byte/opcode access, verified JUMPDEST analysis, and PUSH immediate reading into a Word256
-  ExecState.scala              Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data
-  Interpreter.scala            The step/run dispatch loop: arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, and memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas; proven-terminating run
-evm/src/test/scala/evm/
-  core/Word256Suite.scala      munit unit tests for Word256
-  StackSuite.scala             munit unit tests for Stack
-  MemorySuite.scala            munit unit tests for Memory
-  StorageSuite.scala           munit unit tests for Storage
-  GasSuite.scala               munit unit tests for the gas formulas
-  OpcodeSuite.scala            munit unit tests for opcode hex, base gas and decode
-  CodeSuite.scala              munit unit tests for the bytecode wrapper
-  ExecStateSuite.scala         munit unit tests for the execution state
-  InterpreterSuite.scala       munit unit tests running bytecode through the interpreter
-build.sbt                      Build and Stainless wiring; source roots keep each module one verification unit
+src/main/scala/evm/
+  math/    the pure-math and proof layer (no EVM-type references)
+    EvmMath.scala              Number theory: modulus, exponentiation, byte length, signed interpretation, bounds, and their lemmas
+    Bitwise.scala              Bitwise and/or/xor as trusted @extern functions with assumed algebraic axioms; not is verified
+    Collections.scala          Generic List/Map lemmas (for example updated preserves other indices)
+    Bytes.scala                Byte-array packing over Map: readBytes/writeBytes/copyBytes plus framing and round-trip lemmas
+    Gas.scala                  Pure gas pricing formulas (memory expansion, copy, keccak, exp, log, access, sstore) with non-negativity lemmas
+  value/   primitive value types
+    Word256.scala              The 256-bit EVM word with verified arithmetic, bitwise, shift, signed, and comparison operations
+  state/   the mutable machine state
+    Stack.scala                The 1024-item EVM stack (push, pop, peek, dup, swap), verified to respect the depth bound
+    Memory.scala               Byte-addressable EVM memory (load, store, store8, mcopy, msize, expand), with proven write/read round-trips
+    Storage.scala              Persistent/transient key-value store (load, store) for SLOAD/SSTORE and TLOAD/TSTORE
+  code/    the bytecode layer
+    Opcode.scala               Opcode enum (all ~150 opcodes with hex and descriptions), hex/decode and per-opcode base gas
+    Code.scala                 Bytecode wrapper: byte/opcode access, verified JUMPDEST analysis, and PUSH immediate reading into a Word256
+  env/     the execution environment (kept in its own package to avoid the Address/ADDRESS case collision)
+    Address.scala              The 160-bit account address type
+    Context.scala              Block, transaction, and message (call frame) context records
+    WorldState.scala           Accounts (balance, code) keyed by address, with default-zero lookups
+  exec/    the machine
+    ExecState.scala            Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data
+    Interpreter.scala          The step/run dispatch loop: arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, and memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas; proven-terminating run
+src/test/scala/evm/            munit unit tests, one suite per type (Word256, Stack, Memory, Storage, Gas, Opcode, Code, ExecState, Interpreter, Context)
+build.sbt                      Single Stainless project (Stainless runs on every compile)
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
 ```
 
 ## Verification approach: lemmas and axioms
 
-Each function carries its specification inline as `require` (preconditions) and `ensuring` (postconditions). Stainless turns these into verification conditions handled by the SMT solver. The solver knows nothing about a function beyond its literal definition and will not discover non-trivial facts on its own, so when it gets stuck (`unknown`) we give it the missing fact in one of two forms, both live in `proofs/src` and are invoked from the EVM code as needed.
+Each function carries its specification inline as `require` (preconditions) and `ensuring` (postconditions). Stainless turns these into verification conditions handled by the SMT solver. The solver knows nothing about a function beyond its literal definition and will not discover non-trivial facts on its own, so when it gets stuck (`unknown`) we give it the missing fact in one of two forms, both live in the `evm.math` package and are invoked from the EVM code as needed.
 
 ### Lemmas: proven facts
 
