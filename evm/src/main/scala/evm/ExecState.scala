@@ -48,7 +48,7 @@ case class ExecState(
   def advancePc(n: BigInt): ExecState = {
     require(n >= 0)
     copy(pc = pc + n)
-  }.ensuring(r => r.pc == pc + n && r.gas == gas && r.status == status)
+  }.ensuring(r => r.pc == pc + n && r.gas == gas && r.status == status && r.stack == stack)
 
   def halt: ExecState = {
     copy(status = Status.Halted)

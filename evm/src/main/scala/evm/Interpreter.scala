@@ -11,7 +11,12 @@ object Interpreter:
       val (a, t) = st.stack.pop()
       st.copy(stack = t.push(f(a))).advancePc(1)
     }
-  }.ensuring(r => !r.isRunning || r.gas == st.gas)
+  }.ensuring(r =>
+    (!r.isRunning || r.gas == st.gas)
+    && ((st.isRunning && st.stack.data.nonEmpty) ==>
+         (r.isRunning && r.gas == st.gas && r.pc == st.pc + 1
+          && r.stack.data.head == f(st.stack.data.head)
+          && r.stack.data.tail == st.stack.data.tail)))
 
   def binop(st: ExecState, f: (Word256, Word256) => Word256): ExecState = {
     if (st.stack.data.size < 2) st.fail
@@ -20,7 +25,12 @@ object Interpreter:
       val (b, t2) = t1.pop()
       st.copy(stack = t2.push(f(a, b))).advancePc(1)
     }
-  }.ensuring(r => !r.isRunning || r.gas == st.gas)
+  }.ensuring(r =>
+    (!r.isRunning || r.gas == st.gas)
+    && ((st.isRunning && st.stack.data.size >= 2) ==>
+         (r.isRunning && r.gas == st.gas && r.pc == st.pc + 1
+          && r.stack.data.head == f(st.stack.data.head, st.stack.data.tail.head)
+          && r.stack.data.tail == st.stack.data.tail.tail)))
 
   def terop(st: ExecState, f: (Word256, Word256, Word256) => Word256): ExecState = {
     if (st.stack.data.size < 3) st.fail
@@ -30,25 +40,45 @@ object Interpreter:
       val (c, t3) = t2.pop()
       st.copy(stack = t3.push(f(a, b, c))).advancePc(1)
     }
-  }.ensuring(r => !r.isRunning || r.gas == st.gas)
+  }.ensuring(r =>
+    (!r.isRunning || r.gas == st.gas)
+    && ((st.isRunning && st.stack.data.size >= 3) ==>
+         (r.isRunning && r.gas == st.gas && r.pc == st.pc + 1
+          && r.stack.data.head == f(st.stack.data.head, st.stack.data.tail.head, st.stack.data.tail.tail.head)
+          && r.stack.data.tail == st.stack.data.tail.tail.tail)))
 
   def pushN(st: ExecState, n: BigInt): ExecState = {
     require(0 <= n && n <= 32)
     if (st.stack.data.size >= Stack.MAXIMUM_STACK_SIZE) st.fail
     else st.copy(stack = st.stack.push(st.code.pushValue(st.pc + 1, n))).advancePc(1 + n)
-  }.ensuring(r => !r.isRunning || r.gas == st.gas)
+  }.ensuring(r =>
+    (!r.isRunning || r.gas == st.gas)
+    && ((st.isRunning && st.stack.data.size < Stack.MAXIMUM_STACK_SIZE) ==>
+         (r.isRunning && r.gas == st.gas && r.pc == st.pc + 1 + n
+          && r.stack.data.head == st.code.pushValue(st.pc + 1, n)
+          && r.stack.data.tail == st.stack.data)))
 
   def dupN(st: ExecState, n: BigInt): ExecState = {
     require(1 <= n && n <= 16)
     if (st.stack.data.size < n || st.stack.data.size >= Stack.MAXIMUM_STACK_SIZE) st.fail
     else st.copy(stack = st.stack.dup(n)).advancePc(1)
-  }.ensuring(r => !r.isRunning || r.gas == st.gas)
+  }.ensuring(r =>
+    (!r.isRunning || r.gas == st.gas)
+    && ((st.isRunning && n <= st.stack.data.size && st.stack.data.size < Stack.MAXIMUM_STACK_SIZE) ==>
+         (r.isRunning && r.gas == st.gas && r.pc == st.pc + 1
+          && r.stack.data.head == st.stack.data(n - 1)
+          && r.stack.data.tail == st.stack.data)))
 
   def swapN(st: ExecState, n: BigInt): ExecState = {
     require(1 <= n && n <= 16)
     if (st.stack.data.size <= n) st.fail
     else st.copy(stack = st.stack.swap(n)).advancePc(1)
-  }.ensuring(r => !r.isRunning || r.gas == st.gas)
+  }.ensuring(r =>
+    (!r.isRunning || r.gas == st.gas)
+    && ((st.isRunning && n < st.stack.data.size) ==>
+         (r.isRunning && r.gas == st.gas && r.pc == st.pc + 1
+          && r.stack.data(0) == st.stack.data(n)
+          && r.stack.data(n) == st.stack.data(0))))
 
   def execute(s1: ExecState, op: Opcode): ExecState = {
     op match
