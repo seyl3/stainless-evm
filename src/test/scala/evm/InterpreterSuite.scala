@@ -178,6 +178,31 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(pc.stack.peek(0).value, BigInt(1))
   }
 
+  test("BALANCE reads an account's balance from the world by address") {
+    val target = Address(BigInt(0x77))
+    val world = WorldState(stainless.lang.Map(target -> Account(Word256(BigInt(555)), Code.empty)))
+    val s = runWith(5000, BlockContext.empty, TxContext.empty, MessageContext.empty, world, 0x60, 0x77, 0x31, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(555))
+  }
+
+  test("a cold BALANCE costs 2600 and a repeat warm access costs 100") {
+    val cold = run(2603, 0x60, 0x77, 0x31, 0x00)
+    assertEquals(cold.status, Status.Halted)
+    val coldOog = run(2602, 0x60, 0x77, 0x31, 0x00)
+    assertEquals(coldOog.status, Status.Failed)
+    val warmSecond = run(2900, 0x60, 0x77, 0x31, 0x50, 0x60, 0x77, 0x31, 0x00)
+    assertEquals(warmSecond.status, Status.Halted)
+  }
+
+  test("EXTCODESIZE reads an account's code length") {
+    val target = Address(BigInt(0x88))
+    val world = WorldState(stainless.lang.Map(target -> Account(Word256.Zero, code(0x60, 0x00, 0x00))))
+    val s = runWith(5000, BlockContext.empty, TxContext.empty, MessageContext.empty, world,
+      0x60, 0x88, 0x3B, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(3))
+  }
+
   test("an unsupported opcode fails") {
     val s = run(1000, 0xF3)
     assertEquals(s.status, Status.Failed)
