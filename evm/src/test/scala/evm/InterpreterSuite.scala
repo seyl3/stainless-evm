@@ -99,6 +99,40 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(s.stack.peek(0).value, BigInt(4))
   }
 
+  test("MSTORE then MLOAD round-trips a word through memory") {
+    val s = run(10000, 0x60, 0x2A, 0x60, 0x00, 0x52, 0x60, 0x00, 0x51, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(0x2A))
+  }
+
+  test("MSTORE grows memory and MSIZE reports it") {
+    val s = run(10000, 0x60, 0x01, 0x60, 0x00, 0x52, 0x59, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(32))
+  }
+
+  test("MLOAD of an unwritten slot reads zero") {
+    val s = run(10000, 0x60, 0x40, 0x51, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(0))
+  }
+
+  test("MSTORE8 writes a single byte") {
+    val s = run(10000, 0x60, 0xFF, 0x60, 0x00, 0x53, 0x59, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(32))
+  }
+
+  test("memory expansion at a high offset runs out of gas") {
+    val s = run(50, 0x60, 0x00, 0x61, 0xFF, 0xFF, 0x52, 0x00)
+    assertEquals(s.status, Status.Failed)
+  }
+
+  test("EXP with a large exponent costs more gas than the base") {
+    val ok = run(1000, 0x61, 0x01, 0x00, 0x60, 0x02, 0x0A, 0x00)
+    assertEquals(ok.status, Status.Halted)
+    val oog = run(30, 0x61, 0x01, 0x00, 0x60, 0x02, 0x0A, 0x00)
+    assertEquals(oog.status, Status.Failed)
+  }
+
   test("an unsupported opcode fails") {
     val s = run(1000, 0xF3)
     assertEquals(s.status, Status.Failed)
