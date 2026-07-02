@@ -5,6 +5,8 @@ import evm.core.Word256
 
 class InterpreterSuite extends munit.FunSuite {
 
+  val MAX: BigInt = BigInt(2).pow(256) - 1
+
   def code(bytes: Int*): Code =
     Code(bytes.foldRight(Nil[BigInt](): List[BigInt])((b, acc) => Cons(BigInt(b), acc)))
 
@@ -46,8 +48,59 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(s.status, Status.Failed)
   }
 
+  test("MUL and SUB compute correctly") {
+    val mul = run(1000, 0x60, 0x06, 0x60, 0x07, 0x02, 0x00)
+    assertEquals(mul.stack.peek(0).value, BigInt(42))
+    val sub = run(1000, 0x60, 0x03, 0x60, 0x0A, 0x03, 0x00)
+    assertEquals(sub.stack.peek(0).value, BigInt(7))
+  }
+
+  test("LT pushes 1 or 0") {
+    val t = run(1000, 0x60, 0x05, 0x60, 0x02, 0x10, 0x00)
+    assertEquals(t.stack.peek(0).value, BigInt(1))
+    val f = run(1000, 0x60, 0x02, 0x60, 0x05, 0x10, 0x00)
+    assertEquals(f.stack.peek(0).value, BigInt(0))
+  }
+
+  test("ISZERO and NOT") {
+    val z = run(1000, 0x60, 0x00, 0x15, 0x00)
+    assertEquals(z.stack.peek(0).value, BigInt(1))
+    val n = run(1000, 0x60, 0x00, 0x19, 0x00)
+    assertEquals(n.stack.peek(0).value, MAX)
+  }
+
+  test("AND of 0xF0 and 0x0F is 0") {
+    val s = run(1000, 0x60, 0xF0, 0x60, 0x0F, 0x16, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(0))
+  }
+
+  test("SHL shifts the value by the shift amount") {
+    val s = run(1000, 0x60, 0x01, 0x60, 0x04, 0x1B, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(16))
+  }
+
+  test("PUSH2 reads a two-byte immediate") {
+    val s = run(1000, 0x61, 0x12, 0x34, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(0x1234))
+  }
+
+  test("DUP1 duplicates the top and SWAP1 swaps the top two") {
+    val d = run(1000, 0x60, 0x07, 0x80, 0x00)
+    assertEquals(d.stack.data.size, BigInt(2))
+    assertEquals(d.stack.peek(0).value, BigInt(7))
+    assertEquals(d.stack.peek(1).value, BigInt(7))
+    val w = run(1000, 0x60, 0x01, 0x60, 0x02, 0x90, 0x00)
+    assertEquals(w.stack.peek(0).value, BigInt(1))
+    assertEquals(w.stack.peek(1).value, BigInt(2))
+  }
+
+  test("ADDMOD uses the true sum before the modulus") {
+    val s = run(1000, 0x60, 0x08, 0x60, 0x0A, 0x60, 0x0A, 0x08, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(4))
+  }
+
   test("an unsupported opcode fails") {
-    val s = run(1000, 0x02)
+    val s = run(1000, 0xF3)
     assertEquals(s.status, Status.Failed)
   }
 }
