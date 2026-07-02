@@ -203,6 +203,39 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(s.stack.peek(0).value, BigInt(3))
   }
 
+  test("SSTORE then SLOAD round-trips a value through storage") {
+    val s = run(30000, 0x60, 0x2A, 0x60, 0x01, 0x55, 0x60, 0x01, 0x54, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(0x2A))
+  }
+
+  test("a fresh SSTORE costs 22100 and out-of-gas one below") {
+    val ok = run(22106, 0x60, 0x2A, 0x60, 0x01, 0x55, 0x00)
+    assertEquals(ok.status, Status.Halted)
+    val oog = run(22105, 0x60, 0x2A, 0x60, 0x01, 0x55, 0x00)
+    assertEquals(oog.status, Status.Failed)
+  }
+
+  test("a cold SLOAD costs 2100 and a repeat warm access costs 100") {
+    val cold = run(2103, 0x60, 0x01, 0x54, 0x00)
+    assertEquals(cold.status, Status.Halted)
+    val coldOog = run(2102, 0x60, 0x01, 0x54, 0x00)
+    assertEquals(coldOog.status, Status.Failed)
+    val warmSecond = run(2300, 0x60, 0x01, 0x54, 0x50, 0x60, 0x01, 0x54, 0x00)
+    assertEquals(warmSecond.status, Status.Halted)
+  }
+
+  test("TSTORE then TLOAD round-trips through transient storage") {
+    val s = run(1000, 0x60, 0x63, 0x60, 0x05, 0x5D, 0x60, 0x05, 0x5C, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(0x63))
+  }
+
+  test("transient storage is separate from persistent storage") {
+    val s = run(5000, 0x60, 0x63, 0x60, 0x05, 0x5D, 0x60, 0x05, 0x54, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(0))
+  }
+
   test("an unsupported opcode fails") {
     val s = run(1000, 0xF3)
     assertEquals(s.status, Status.Failed)
