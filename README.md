@@ -69,7 +69,7 @@ src/main/scala/evm/
     WorldState.scala           Accounts (balance, code) keyed by address, with default-zero lookups
   exec/    the machine
     ExecState.scala            Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data, and the block/tx/message/world context
-    Interpreter.scala          The step/run dispatch loop: arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, and memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas; proven-terminating run
+    Interpreter.scala          The step/run dispatch loop: arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas, and the read-only environment ops (ADDRESS, CALLER, CALLVALUE, ORIGIN, block/tx fields, SELFBALANCE, CODESIZE, PC, GAS); proven-terminating run
 src/test/scala/evm/            munit unit tests, one suite per type (Word256, Stack, Memory, Storage, Gas, Opcode, Code, ExecState, Interpreter, Context)
 build.sbt                      Single Stainless project (Stainless runs on every compile)
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
