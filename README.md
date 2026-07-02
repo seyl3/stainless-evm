@@ -52,7 +52,7 @@ evm/src/main/scala/evm/
   Opcode.scala                 Opcode enum (all ~150 opcodes with hex and descriptions), hex/decode and per-opcode base gas
   Code.scala                   Bytecode wrapper: byte/opcode access, verified JUMPDEST analysis, and PUSH immediate reading into a Word256
   ExecState.scala              Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data
-  Interpreter.scala            The step/run dispatch loop: all arithmetic, comparison, bitwise, shift, PUSH0-32, DUP, SWAP, POP; proven-terminating run
+  Interpreter.scala            The step/run dispatch loop: arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, and memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas; proven-terminating run
 evm/src/test/scala/evm/
   core/Word256Suite.scala      munit unit tests for Word256
   StackSuite.scala             munit unit tests for Stack
