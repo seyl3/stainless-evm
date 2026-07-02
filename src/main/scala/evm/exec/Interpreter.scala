@@ -15,6 +15,16 @@ object Interpreter:
     Gas.memoryExpansionCost(st.memory.size / 32, st.memory.expandedTo(end) / 32)
   }.ensuring(r => r >= 0)
 
+  def pushConst(st: ExecState, v: Word256): ExecState = {
+    if (st.stack.data.size >= Stack.MAXIMUM_STACK_SIZE) st.fail
+    else st.copy(stack = st.stack.push(v)).advancePc(1)
+  }.ensuring(r =>
+    (!r.isRunning || r.gas == st.gas)
+    && ((st.isRunning && st.stack.data.size < Stack.MAXIMUM_STACK_SIZE) ==>
+         (r.isRunning && r.gas == st.gas && r.pc == st.pc + 1
+          && r.stack.data.head == v
+          && r.stack.data.tail == st.stack.data)))
+
   def unop(st: ExecState, f: Word256 => Word256): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -250,6 +260,34 @@ object Interpreter:
           if (s1.outOfGas(extra)) s1.fail
           else s1.chargeGas(extra).copy(stack = t3, memory = s1.memory.mcopy(d.value, sr.value, l.value)).advancePc(1)
         }
+
+      case Opcode.ADDRESS => pushConst(s1, s1.msg.self.toWord)
+      case Opcode.ORIGIN => pushConst(s1, s1.tx.origin.toWord)
+      case Opcode.CALLER => pushConst(s1, s1.msg.caller.toWord)
+      case Opcode.CALLVALUE => pushConst(s1, s1.msg.callValue)
+      case Opcode.GASPRICE => pushConst(s1, s1.tx.gasPrice)
+      case Opcode.COINBASE => pushConst(s1, s1.block.coinbase.toWord)
+      case Opcode.TIMESTAMP => pushConst(s1, s1.block.timestamp)
+      case Opcode.NUMBER => pushConst(s1, s1.block.number)
+      case Opcode.PREVRANDAO => pushConst(s1, s1.block.prevrandao)
+      case Opcode.GASLIMIT => pushConst(s1, s1.block.gasLimit)
+      case Opcode.CHAINID => pushConst(s1, s1.block.chainId)
+      case Opcode.SELFBALANCE => pushConst(s1, s1.world.balanceOf(s1.msg.self))
+      case Opcode.BASEFEE => pushConst(s1, s1.block.baseFee)
+      case Opcode.BLOBBASEFEE => pushConst(s1, s1.block.blobBaseFee)
+
+      case Opcode.CALLDATASIZE =>
+        if (s1.msg.callData.size > MAX_VALUE) s1.fail
+        else pushConst(s1, Word256(s1.msg.callData.size))
+      case Opcode.CODESIZE =>
+        if (s1.code.size > MAX_VALUE) s1.fail
+        else pushConst(s1, Word256(s1.code.size))
+      case Opcode.PC =>
+        if (s1.pc > MAX_VALUE) s1.fail
+        else pushConst(s1, Word256(s1.pc))
+      case Opcode.GAS =>
+        if (s1.gas > MAX_VALUE) s1.fail
+        else pushConst(s1, Word256(s1.gas))
 
       case _ => s1.fail
   }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))
