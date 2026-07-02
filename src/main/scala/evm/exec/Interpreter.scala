@@ -7,6 +7,7 @@ import evm.math.EvmMath
 import evm.math.EvmMath.MAX_VALUE
 import evm.state.Stack
 import evm.code.Opcode
+import evm.env.Address
 
 object Interpreter:
 
@@ -288,6 +289,35 @@ object Interpreter:
       case Opcode.GAS =>
         if (s1.gas > MAX_VALUE) s1.fail
         else pushConst(s1, Word256(s1.gas))
+
+      case Opcode.BALANCE =>
+        if (s1.stack.data.isEmpty) s1.fail
+        else {
+          val (a, t) = s1.stack.pop()
+          val addr = Address.fromWord(a)
+          val extra = if (s1.accessedAccounts.contains(addr)) BigInt(0) else BigInt(2500)
+          if (s1.outOfGas(extra)) s1.fail
+          else {
+            val s2 = s1.chargeGas(extra)
+            s2.copy(stack = t.push(s2.world.balanceOf(addr)),
+                    accessedAccounts = s2.accessedAccounts ++ Set(addr)).advancePc(1)
+          }
+        }
+
+      case Opcode.EXTCODESIZE =>
+        if (s1.stack.data.isEmpty) s1.fail
+        else {
+          val (a, t) = s1.stack.pop()
+          val addr = Address.fromWord(a)
+          val extra = if (s1.accessedAccounts.contains(addr)) BigInt(0) else BigInt(2500)
+          val sz = s1.world.codeOf(addr).size
+          if (s1.outOfGas(extra) || sz > MAX_VALUE) s1.fail
+          else {
+            val s2 = s1.chargeGas(extra)
+            s2.copy(stack = t.push(Word256(sz)),
+                    accessedAccounts = s2.accessedAccounts ++ Set(addr)).advancePc(1)
+          }
+        }
 
       case _ => s1.fail
   }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))

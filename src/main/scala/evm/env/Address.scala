@@ -8,6 +8,11 @@ object Address:
   val MODULO: BigInt = pow(BigInt(2), BigInt(160))
   def zero: Address = Address(BigInt(0))
 
+  def fromWord(w: Word256): Address = {
+    EvmMath.powTwoPos(BigInt(160))
+    Address(w.value % MODULO)
+  }.ensuring(r => r.value == w.value % MODULO)
+
 case class Address(value: BigInt):
   require(0 <= value && value < Address.MODULO)
 

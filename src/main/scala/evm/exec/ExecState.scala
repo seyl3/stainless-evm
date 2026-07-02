@@ -4,7 +4,7 @@ import stainless.collection.*
 import stainless.lang.*
 import evm.code.Code
 import evm.state.{Stack, Memory, Storage}
-import evm.env.{BlockContext, TxContext, MessageContext, WorldState}
+import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState}
 
 enum Status:
   case Running
@@ -23,7 +23,8 @@ object ExecState:
   def initialWith(code: Code, gas: BigInt, block: BlockContext, tx: TxContext, msg: MessageContext, world: WorldState): ExecState = {
     require(gas >= 0)
     ExecState(code, Stack.empty, Memory.empty, Storage.empty, Storage.empty,
-      BigInt(0), gas, BigInt(0), false, Status.Running, Nil(), block, tx, msg, world)
+      BigInt(0), gas, BigInt(0), false, Status.Running, Nil(), block, tx, msg, world,
+      Set.empty[Address])
   }
 
 case class ExecState(
@@ -41,7 +42,8 @@ case class ExecState(
   block: BlockContext,
   tx: TxContext,
   msg: MessageContext,
-  world: WorldState
+  world: WorldState,
+  accessedAccounts: Set[Address]
 ):
   require(pc >= 0 && gas >= 0 && depth >= 0 && depth <= ExecState.MAX_DEPTH)
 
