@@ -69,7 +69,7 @@ src/main/scala/evm/
     WorldState.scala           Accounts (balance, code) keyed by address, with default-zero lookups
   exec/    the machine
     ExecState.scala            Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data, and the block/tx/message/world context
-    Interpreter.scala          The step/run dispatch loop: arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas, the read-only environment ops (ADDRESS, CALLER, CALLVALUE, ORIGIN, block/tx fields, SELFBALANCE, CODESIZE, PC, GAS), world reads with account cold/warm (BALANCE, EXTCODESIZE), and storage (SLOAD/SSTORE with cold/warm and the EIP-2200 charge, TLOAD/TSTORE); proven-terminating run
+    Interpreter.scala          The step/run dispatch loop: arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas, the read-only environment ops (ADDRESS, CALLER, CALLVALUE, ORIGIN, block/tx fields, SELFBALANCE, CODESIZE, PC, GAS), world reads with account cold/warm (BALANCE, EXTCODESIZE), storage (SLOAD/SSTORE with cold/warm and the EIP-2200 charge, TLOAD/TSTORE), and control flow (JUMP/JUMPI against verified JUMPDEST analysis, RETURN, REVERT); proven-terminating run
 src/test/scala/evm/            munit unit tests, one suite per type (Word256, Stack, Memory, Storage, Gas, Opcode, Code, ExecState, Interpreter, Context)
 build.sbt                      Single Stainless project (Stainless runs on every compile)
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
