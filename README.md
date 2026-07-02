@@ -50,7 +50,7 @@ evm/src/main/scala/evm/
   Memory.scala                 Byte-addressable EVM memory (load, store, store8, mcopy, msize, expand), with proven write/read round-trips
   Storage.scala                Persistent/transient key-value store (load, store) for SLOAD/SSTORE and TLOAD/TSTORE
   Opcode.scala                 Opcode enum (all ~150 opcodes with hex and descriptions), hex/decode and per-opcode base gas
-  Code.scala                   Bytecode wrapper: byte/opcode access by position and verified JUMPDEST analysis (valid jump targets)
+  Code.scala                   Bytecode wrapper: byte/opcode access, verified JUMPDEST analysis, and PUSH immediate reading into a Word256
   ExecState.scala              Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data
 evm/src/test/scala/evm/
   core/Word256Suite.scala      munit unit tests for Word256
