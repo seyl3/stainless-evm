@@ -7,6 +7,7 @@ enum Status:
   case Running
   case Halted
   case Reverted
+  case Failed
 
 object ExecState:
   val MAX_DEPTH: BigInt = 1024
@@ -42,12 +43,12 @@ case class ExecState(
   def chargeGas(cost: BigInt): ExecState = {
     require(cost >= 0 && cost <= gas)
     copy(gas = gas - cost)
-  }.ensuring(r => r.gas == gas - cost && r.gas >= 0)
+  }.ensuring(r => r.gas == gas - cost && r.gas >= 0 && r.status == status)
 
   def advancePc(n: BigInt): ExecState = {
     require(n >= 0)
     copy(pc = pc + n)
-  }.ensuring(r => r.pc == pc + n)
+  }.ensuring(r => r.pc == pc + n && r.gas == gas && r.status == status)
 
   def halt: ExecState = {
     copy(status = Status.Halted)
@@ -56,3 +57,7 @@ case class ExecState(
   def revert: ExecState = {
     copy(status = Status.Reverted)
   }.ensuring(r => !r.isRunning && r.gas == gas)
+
+  def fail: ExecState = {
+    copy(status = Status.Failed, gas = 0)
+  }.ensuring(r => !r.isRunning)
