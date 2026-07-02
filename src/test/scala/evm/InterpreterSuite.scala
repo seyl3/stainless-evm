@@ -278,6 +278,79 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(s.status, Status.Failed)
   }
 
+  test("DIV and MOD are unsigned with the top operand as dividend") {
+    assertEquals(run(1000, 0x60, 0x03, 0x60, 0x14, 0x04, 0x00).stack.peek(0).value, BigInt(6))
+    assertEquals(run(1000, 0x60, 0x03, 0x60, 0x14, 0x06, 0x00).stack.peek(0).value, BigInt(2))
+  }
+
+  test("SDIV divides signed: -6 / 2 == -3") {
+    val s = run(1000, 0x60, 0x02, 0x60, 0x06, 0x60, 0x00, 0x03, 0x05, 0x00)
+    assertEquals(s.stack.peek(0).value, MAX - 2)
+  }
+
+  test("SMOD takes the sign of the dividend: -6 % 4 == -2") {
+    val s = run(1000, 0x60, 0x04, 0x60, 0x06, 0x60, 0x00, 0x03, 0x07, 0x00)
+    assertEquals(s.stack.peek(0).value, MAX - 1)
+  }
+
+  test("SIGNEXTEND extends the sign bit of the given byte") {
+    val s = run(1000, 0x60, 0xFF, 0x60, 0x00, 0x0B, 0x00)
+    assertEquals(s.stack.peek(0).value, MAX)
+  }
+
+  test("MULMOD uses the true product before the modulus") {
+    val s = run(1000, 0x60, 0x08, 0x60, 0x0A, 0x60, 0x0A, 0x09, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(4))
+  }
+
+  test("GT and EQ") {
+    assertEquals(run(1000, 0x60, 0x02, 0x60, 0x05, 0x11, 0x00).stack.peek(0).value, BigInt(1))
+    assertEquals(run(1000, 0x60, 0x07, 0x60, 0x07, 0x14, 0x00).stack.peek(0).value, BigInt(1))
+  }
+
+  test("SLT and SGT compare signed: -1 < 1 and 1 > -1") {
+    val slt = run(1000, 0x60, 0x01, 0x60, 0x00, 0x19, 0x12, 0x00)
+    assertEquals(slt.stack.peek(0).value, BigInt(1))
+    val sgt = run(1000, 0x60, 0x00, 0x19, 0x60, 0x01, 0x13, 0x00)
+    assertEquals(sgt.stack.peek(0).value, BigInt(1))
+  }
+
+  test("OR and XOR") {
+    assertEquals(run(1000, 0x60, 0xF0, 0x60, 0x0F, 0x17, 0x00).stack.peek(0).value, BigInt(0xFF))
+    assertEquals(run(1000, 0x60, 0xFF, 0x60, 0x0F, 0x18, 0x00).stack.peek(0).value, BigInt(0xF0))
+  }
+
+  test("BYTE extracts the indexed byte (0 = most significant)") {
+    val s = run(1000, 0x61, 0x12, 0x34, 0x60, 0x1F, 0x1A, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(0x34))
+  }
+
+  test("SHR is logical and SAR is arithmetic") {
+    assertEquals(run(1000, 0x60, 0xFF, 0x60, 0x04, 0x1C, 0x00).stack.peek(0).value, BigInt(0x0F))
+    val sar = run(1000, 0x60, 0x00, 0x19, 0x60, 0x01, 0x1D, 0x00)
+    assertEquals(sar.stack.peek(0).value, MAX)
+  }
+
+  test("CLZ counts leading zero bits") {
+    assertEquals(run(1000, 0x60, 0x01, 0x1E, 0x00).stack.peek(0).value, BigInt(255))
+    assertEquals(run(1000, 0x60, 0x00, 0x1E, 0x00).stack.peek(0).value, BigInt(256))
+  }
+
+  test("MCOPY copies a word between memory regions") {
+    val s = run(30000, 0x60, 0x2A, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0x60, 0x20, 0x5E, 0x60, 0x20, 0x51, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value, BigInt(0x2A))
+  }
+
+  test("DUP2 and SWAP2 reach the second and third items") {
+    val dup = run(1000, 0x60, 0x01, 0x60, 0x02, 0x81, 0x00)
+    assertEquals(dup.stack.data.size, BigInt(3))
+    assertEquals(dup.stack.peek(0).value, BigInt(1))
+    val swap = run(1000, 0x60, 0x01, 0x60, 0x02, 0x60, 0x03, 0x91, 0x00)
+    assertEquals(swap.stack.peek(0).value, BigInt(1))
+    assertEquals(swap.stack.peek(2).value, BigInt(3))
+  }
+
   test("an unsupported opcode fails") {
     val s = run(1000, 0xF1)
     assertEquals(s.status, Status.Failed)
