@@ -140,6 +140,44 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(oog.status, Status.Failed)
   }
 
+  def runWith(gas: BigInt, block: BlockContext, tx: TxContext, msg: MessageContext,
+              world: WorldState, bytes: Int*): ExecState =
+    Interpreter.run(ExecState.initialWith(code(bytes*), gas, block, tx, msg, world))
+
+  test("CALLER, CALLVALUE and ORIGIN read the message and tx context") {
+    val msg = MessageContext(Address(BigInt(9)), Address(BigInt(0xABCD)), Word256(BigInt(77)), Nil())
+    val tx = TxContext(Address(BigInt(0x1234)), Word256(BigInt(5)))
+    val caller = runWith(1000, BlockContext.empty, tx, msg, WorldState.empty, 0x33, 0x00)
+    assertEquals(caller.stack.peek(0).value, BigInt(0xABCD))
+    val value = runWith(1000, BlockContext.empty, tx, msg, WorldState.empty, 0x34, 0x00)
+    assertEquals(value.stack.peek(0).value, BigInt(77))
+    val origin = runWith(1000, BlockContext.empty, tx, msg, WorldState.empty, 0x32, 0x00)
+    assertEquals(origin.stack.peek(0).value, BigInt(0x1234))
+  }
+
+  test("NUMBER and CHAINID read the block context") {
+    val block = BlockContext.empty.copy(number = Word256(BigInt(19000000)), chainId = Word256(BigInt(1)))
+    val num = runWith(1000, block, TxContext.empty, MessageContext.empty, WorldState.empty, 0x43, 0x00)
+    assertEquals(num.stack.peek(0).value, BigInt(19000000))
+    val chain = runWith(1000, block, TxContext.empty, MessageContext.empty, WorldState.empty, 0x46, 0x00)
+    assertEquals(chain.stack.peek(0).value, BigInt(1))
+  }
+
+  test("SELFBALANCE reads the executing account's balance from the world") {
+    val self = Address(BigInt(42))
+    val msg = MessageContext(self, Address.zero, Word256.Zero, Nil())
+    val world = WorldState(stainless.lang.Map(self -> Account(Word256(BigInt(999)), Code.empty)))
+    val s = runWith(1000, BlockContext.empty, TxContext.empty, msg, world, 0x47, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(999))
+  }
+
+  test("CODESIZE and PC report machine state") {
+    val sz = run(1000, 0x38, 0x00)
+    assertEquals(sz.stack.peek(0).value, BigInt(2))
+    val pc = run(1000, 0x5B, 0x58, 0x00)
+    assertEquals(pc.stack.peek(0).value, BigInt(1))
+  }
+
   test("an unsupported opcode fails") {
     val s = run(1000, 0xF3)
     assertEquals(s.status, Status.Failed)
