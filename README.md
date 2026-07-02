@@ -52,6 +52,7 @@ evm/src/main/scala/evm/
   Opcode.scala                 Opcode enum (all ~150 opcodes with hex and descriptions), hex/decode and per-opcode base gas
   Code.scala                   Bytecode wrapper: byte/opcode access, verified JUMPDEST analysis, and PUSH immediate reading into a Word256
   ExecState.scala              Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data
+  Interpreter.scala            The step/run dispatch loop (skeleton: STOP, PUSH1, POP, ADD, JUMPDEST), with a proven-terminating run
 evm/src/test/scala/evm/
   core/Word256Suite.scala      munit unit tests for Word256
   StackSuite.scala             munit unit tests for Stack
@@ -61,6 +62,7 @@ evm/src/test/scala/evm/
   OpcodeSuite.scala            munit unit tests for opcode hex, base gas and decode
   CodeSuite.scala              munit unit tests for the bytecode wrapper
   ExecStateSuite.scala         munit unit tests for the execution state
+  InterpreterSuite.scala       munit unit tests running bytecode through the interpreter
 build.sbt                      Build and Stainless wiring; source roots keep each module one verification unit
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
 ```
