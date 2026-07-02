@@ -16,6 +16,12 @@ object EvmMath {
     else base * pow(base, exp - 1)
   }.ensuring(res => (base >= 0 ==> res >= 0) && (base >= 1 ==> res >= 1))
 
+  def byteLength(v: BigInt): BigInt = {
+    require(v >= 0)
+    decreases(v)
+    if (v == 0) BigInt(0) else 1 + byteLength(v / 256)
+  }.ensuring(r => r >= 0)
+
   def inBounds(v: BigInt): Boolean = v >= 0 && v <= MAX_VALUE
 
   def toSigned(v: BigInt): BigInt = {
