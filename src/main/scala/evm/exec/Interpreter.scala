@@ -101,13 +101,187 @@ object Interpreter:
           && r.stack.data(0) == st.stack.data(n)
           && r.stack.data(n) == st.stack.data(0))))
 
+  def popOp(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else st.copy(stack = st.stack.pop()._2).advancePc(1)
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail)))
+
+  def mload(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else {
+      val (o, t) = st.stack.pop()
+      val extra = memExpandCost(st, o.value + 32)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t.push(st.memory.load(o.value)),
+             memory = st.memory.expand(o.value + 32)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty && r.pc == st.pc + 1
+          && r.stack.data.head == st.memory.load(st.stack.data.head.value)
+          && r.stack.data.tail == st.stack.data.tail)))
+
+  def mstore(st: ExecState): ExecState = {
+    if (st.stack.data.size < 2) st.fail
+    else {
+      val (o, t1) = st.stack.pop()
+      val (v, t2) = t1.pop()
+      val extra = memExpandCost(st, o.value + 32)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t2, memory = st.memory.store(o.value, v)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 2 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail
+          && r.memory.load(st.stack.data.head.value).value == st.stack.data.tail.head.value)))
+
+  def mstore8(st: ExecState): ExecState = {
+    if (st.stack.data.size < 2) st.fail
+    else {
+      val (o, t1) = st.stack.pop()
+      val (v, t2) = t1.pop()
+      val extra = memExpandCost(st, o.value + 1)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t2, memory = st.memory.store8(o.value, v)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 2 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail
+          && r.memory.getByte(st.stack.data.head.value) == st.stack.data.tail.head.value % 256)))
+
+  def mcopyOp(st: ExecState): ExecState = {
+    if (st.stack.data.size < 3) st.fail
+    else {
+      val (d, t1) = st.stack.pop()
+      val (sr, t2) = t1.pop()
+      val (l, t3) = t2.pop()
+      val end = if (d.value > sr.value) d.value + l.value else sr.value + l.value
+      val extra = if (l.value == 0) BigInt(0) else 3 * Gas.words(l.value) + memExpandCost(st, end)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t3, memory = st.memory.mcopy(d.value, sr.value, l.value)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 3 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail.tail
+          && r.memory == st.memory.mcopy(st.stack.data.head.value,
+               st.stack.data.tail.head.value, st.stack.data.tail.tail.head.value))))
+
+  def balanceOp(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else {
+      val (a, t) = st.stack.pop()
+      val addr = Address.fromWord(a)
+      val extra = if (st.accessedAccounts.contains(addr)) BigInt(0) else BigInt(2500)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t.push(st.world.balanceOf(addr)),
+             accessedAccounts = st.accessedAccounts ++ Set(addr)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty && r.pc == st.pc + 1
+          && r.stack.data.head == st.world.balanceOf(Address.fromWord(st.stack.data.head))
+          && r.stack.data.tail == st.stack.data.tail
+          && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head)))))
+
+  def extcodesizeOp(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else {
+      val (a, t) = st.stack.pop()
+      val addr = Address.fromWord(a)
+      val extra = if (st.accessedAccounts.contains(addr)) BigInt(0) else BigInt(2500)
+      val sz = st.world.codeOf(addr).size
+      if (st.outOfGas(extra) || sz > MAX_VALUE) st.fail
+      else st.chargeGas(extra).copy(stack = t.push(Word256(sz)),
+             accessedAccounts = st.accessedAccounts ++ Set(addr)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty && r.pc == st.pc + 1
+          && r.stack.data.head.value == st.world.codeOf(Address.fromWord(st.stack.data.head)).size
+          && r.stack.data.tail == st.stack.data.tail
+          && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head)))))
+
+  def tload(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else {
+      val (k, t) = st.stack.pop()
+      st.copy(stack = t.push(st.transient.load(k))).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty && r.pc == st.pc + 1
+          && r.stack.data.head == st.transient.load(st.stack.data.head)
+          && r.stack.data.tail == st.stack.data.tail)))
+
+  def tstore(st: ExecState): ExecState = {
+    if (st.static || st.stack.data.size < 2) st.fail
+    else {
+      val (k, t1) = st.stack.pop()
+      val (v, t2) = t1.pop()
+      st.copy(stack = t2, transient = st.transient.store(k, v)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 2 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail
+          && r.transient.load(st.stack.data.head) == st.stack.data.tail.head)))
+
+  def sload(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else {
+      val (k, t) = st.stack.pop()
+      val extra = if (st.accessedSlots.contains(k)) BigInt(0) else BigInt(2000)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t.push(st.storage.load(k)),
+             accessedSlots = st.accessedSlots ++ Set(k)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty && r.pc == st.pc + 1
+          && r.stack.data.head == st.storage.load(st.stack.data.head)
+          && r.stack.data.tail == st.stack.data.tail
+          && r.accessedSlots.contains(st.stack.data.head))))
+
+  def sstore(st: ExecState): ExecState = {
+    if (st.static || st.stack.data.size < 2 || st.gas + 100 <= 2300) st.fail
+    else {
+      val (k, t1) = st.stack.pop()
+      val (v, t2) = t1.pop()
+      val cold = !st.accessedSlots.contains(k)
+      val extra = Gas.sstoreCost(st.original.load(k).value, st.storage.load(k).value, v.value, cold) - 100
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t2, storage = st.storage.store(k, v),
+             accessedSlots = st.accessedSlots ++ Set(k)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 2 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail
+          && r.storage.load(st.stack.data.head) == st.stack.data.tail.head
+          && r.accessedSlots.contains(st.stack.data.head))))
+
   def execute(s1: ExecState, op: Opcode): ExecState = {
     op match
       case Opcode.STOP => s1.halt
       case Opcode.JUMPDEST => s1.advancePc(1)
-      case Opcode.POP =>
-        if (s1.stack.data.isEmpty) s1.fail
-        else s1.copy(stack = s1.stack.pop()._2).advancePc(1)
+      case Opcode.POP => popOp(s1)
 
       case Opcode.ADD => binop(s1, (a, b) => a + b)
       case Opcode.SUB => binop(s1, (a, b) => a - b)
@@ -214,53 +388,12 @@ object Interpreter:
       case Opcode.SWAP16 => swapN(s1, 16)
 
       case Opcode.MSIZE =>
-        if (s1.stack.data.size >= Stack.MAXIMUM_STACK_SIZE || s1.memory.size > MAX_VALUE) s1.fail
-        else s1.copy(stack = s1.stack.push(Word256(s1.memory.size))).advancePc(1)
-
-      case Opcode.MLOAD =>
-        if (s1.stack.data.isEmpty) s1.fail
-        else {
-          val (o, t) = s1.stack.pop()
-          val extra = memExpandCost(s1, o.value + 32)
-          if (s1.outOfGas(extra)) s1.fail
-          else {
-            val s2 = s1.chargeGas(extra)
-            s2.copy(stack = t.push(s2.memory.load(o.value)),
-                    memory = s2.memory.expand(o.value + 32)).advancePc(1)
-          }
-        }
-
-      case Opcode.MSTORE =>
-        if (s1.stack.data.size < 2) s1.fail
-        else {
-          val (o, t1) = s1.stack.pop()
-          val (v, t2) = t1.pop()
-          val extra = memExpandCost(s1, o.value + 32)
-          if (s1.outOfGas(extra)) s1.fail
-          else s1.chargeGas(extra).copy(stack = t2, memory = s1.memory.store(o.value, v)).advancePc(1)
-        }
-
-      case Opcode.MSTORE8 =>
-        if (s1.stack.data.size < 2) s1.fail
-        else {
-          val (o, t1) = s1.stack.pop()
-          val (v, t2) = t1.pop()
-          val extra = memExpandCost(s1, o.value + 1)
-          if (s1.outOfGas(extra)) s1.fail
-          else s1.chargeGas(extra).copy(stack = t2, memory = s1.memory.store8(o.value, v)).advancePc(1)
-        }
-
-      case Opcode.MCOPY =>
-        if (s1.stack.data.size < 3) s1.fail
-        else {
-          val (d, t1) = s1.stack.pop()
-          val (sr, t2) = t1.pop()
-          val (l, t3) = t2.pop()
-          val end = if (d.value > sr.value) d.value + l.value else sr.value + l.value
-          val extra = if (l.value == 0) BigInt(0) else 3 * Gas.words(l.value) + memExpandCost(s1, end)
-          if (s1.outOfGas(extra)) s1.fail
-          else s1.chargeGas(extra).copy(stack = t3, memory = s1.memory.mcopy(d.value, sr.value, l.value)).advancePc(1)
-        }
+        if (s1.memory.size > MAX_VALUE) s1.fail
+        else pushConst(s1, Word256(s1.memory.size))
+      case Opcode.MLOAD => mload(s1)
+      case Opcode.MSTORE => mstore(s1)
+      case Opcode.MSTORE8 => mstore8(s1)
+      case Opcode.MCOPY => mcopyOp(s1)
 
       case Opcode.ADDRESS => pushConst(s1, s1.msg.self.toWord)
       case Opcode.ORIGIN => pushConst(s1, s1.tx.origin.toWord)
@@ -290,77 +423,12 @@ object Interpreter:
         if (s1.gas > MAX_VALUE) s1.fail
         else pushConst(s1, Word256(s1.gas))
 
-      case Opcode.BALANCE =>
-        if (s1.stack.data.isEmpty) s1.fail
-        else {
-          val (a, t) = s1.stack.pop()
-          val addr = Address.fromWord(a)
-          val extra = if (s1.accessedAccounts.contains(addr)) BigInt(0) else BigInt(2500)
-          if (s1.outOfGas(extra)) s1.fail
-          else {
-            val s2 = s1.chargeGas(extra)
-            s2.copy(stack = t.push(s2.world.balanceOf(addr)),
-                    accessedAccounts = s2.accessedAccounts ++ Set(addr)).advancePc(1)
-          }
-        }
-
-      case Opcode.EXTCODESIZE =>
-        if (s1.stack.data.isEmpty) s1.fail
-        else {
-          val (a, t) = s1.stack.pop()
-          val addr = Address.fromWord(a)
-          val extra = if (s1.accessedAccounts.contains(addr)) BigInt(0) else BigInt(2500)
-          val sz = s1.world.codeOf(addr).size
-          if (s1.outOfGas(extra) || sz > MAX_VALUE) s1.fail
-          else {
-            val s2 = s1.chargeGas(extra)
-            s2.copy(stack = t.push(Word256(sz)),
-                    accessedAccounts = s2.accessedAccounts ++ Set(addr)).advancePc(1)
-          }
-        }
-
-      case Opcode.TLOAD =>
-        if (s1.stack.data.isEmpty) s1.fail
-        else {
-          val (k, t) = s1.stack.pop()
-          s1.copy(stack = t.push(s1.transient.load(k))).advancePc(1)
-        }
-
-      case Opcode.TSTORE =>
-        if (s1.static || s1.stack.data.size < 2) s1.fail
-        else {
-          val (k, t1) = s1.stack.pop()
-          val (v, t2) = t1.pop()
-          s1.copy(stack = t2, transient = s1.transient.store(k, v)).advancePc(1)
-        }
-
-      case Opcode.SLOAD =>
-        if (s1.stack.data.isEmpty) s1.fail
-        else {
-          val (k, t) = s1.stack.pop()
-          val extra = if (s1.accessedSlots.contains(k)) BigInt(0) else BigInt(2000)
-          if (s1.outOfGas(extra)) s1.fail
-          else {
-            val s2 = s1.chargeGas(extra)
-            s2.copy(stack = t.push(s2.storage.load(k)),
-                    accessedSlots = s2.accessedSlots ++ Set(k)).advancePc(1)
-          }
-        }
-
-      case Opcode.SSTORE =>
-        if (s1.static || s1.stack.data.size < 2 || s1.gas + 100 <= 2300) s1.fail
-        else {
-          val (k, t1) = s1.stack.pop()
-          val (v, t2) = t1.pop()
-          val cold = !s1.accessedSlots.contains(k)
-          val extra = Gas.sstoreCost(s1.original.load(k).value, s1.storage.load(k).value, v.value, cold) - 100
-          if (s1.outOfGas(extra)) s1.fail
-          else {
-            val s2 = s1.chargeGas(extra)
-            s2.copy(stack = t2, storage = s2.storage.store(k, v),
-                    accessedSlots = s2.accessedSlots ++ Set(k)).advancePc(1)
-          }
-        }
+      case Opcode.BALANCE => balanceOp(s1)
+      case Opcode.EXTCODESIZE => extcodesizeOp(s1)
+      case Opcode.TLOAD => tload(s1)
+      case Opcode.TSTORE => tstore(s1)
+      case Opcode.SLOAD => sload(s1)
+      case Opcode.SSTORE => sstore(s1)
 
       case _ => s1.fail
   }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))
