@@ -60,12 +60,12 @@ case class ExecState(
   def chargeGas(cost: BigInt): ExecState = {
     require(cost >= 0 && cost <= gas)
     copy(gas = gas - cost)
-  }.ensuring(r => r.gas == gas - cost && r.gas >= 0 && r.status == status)
+  }.ensuring(r => r == copy(gas = gas - cost) && r.gas >= 0)
 
   def advancePc(n: BigInt): ExecState = {
     require(n >= 0)
     copy(pc = pc + n)
-  }.ensuring(r => r.pc == pc + n && r.gas == gas && r.status == status && r.stack == stack)
+  }.ensuring(r => r == copy(pc = pc + n))
 
   def halt: ExecState = {
     copy(status = Status.Halted)
