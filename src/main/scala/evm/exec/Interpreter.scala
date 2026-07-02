@@ -277,6 +277,61 @@ object Interpreter:
           && r.storage.load(st.stack.data.head) == st.stack.data.tail.head
           && r.accessedSlots.contains(st.stack.data.head))))
 
+  def jump(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else {
+      val (d, t) = st.stack.pop()
+      if (st.code.isValidJumpDest(d.value)) st.copy(stack = t, pc = d.value)
+      else st.fail
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty
+          && st.code.isValidJumpDest(st.stack.data.head.value)
+          && r.pc == st.stack.data.head.value
+          && r.stack.data == st.stack.data.tail)))
+
+  def jumpi(st: ExecState): ExecState = {
+    if (st.stack.data.size < 2) st.fail
+    else {
+      val (d, t1) = st.stack.pop()
+      val (cond, t2) = t1.pop()
+      if (cond.isZero) st.copy(stack = t2).advancePc(1)
+      else if (st.code.isValidJumpDest(d.value)) st.copy(stack = t2, pc = d.value)
+      else st.fail
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 2
+          && r.stack.data == st.stack.data.tail.tail
+          && (if (st.stack.data.tail.head.isZero) r.pc == st.pc + 1
+              else st.code.isValidJumpDest(st.stack.data.head.value)
+                   && r.pc == st.stack.data.head.value))))
+
+  def returnOp(st: ExecState): ExecState = {
+    if (st.stack.data.size < 2) st.fail
+    else {
+      val (o, t1) = st.stack.pop()
+      val (l, t2) = t1.pop()
+      val extra = if (l.value == 0) BigInt(0) else memExpandCost(st, o.value + l.value)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t2).halt
+    }
+  }.ensuring(r => !r.isRunning && r.gas <= st.gas)
+
+  def revertOp(st: ExecState): ExecState = {
+    if (st.stack.data.size < 2) st.fail
+    else {
+      val (o, t1) = st.stack.pop()
+      val (l, t2) = t1.pop()
+      val extra = if (l.value == 0) BigInt(0) else memExpandCost(st, o.value + l.value)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t2).revert
+    }
+  }.ensuring(r => !r.isRunning && r.gas <= st.gas)
+
   def execute(s1: ExecState, op: Opcode): ExecState = {
     op match
       case Opcode.STOP => s1.halt
@@ -429,6 +484,11 @@ object Interpreter:
       case Opcode.TSTORE => tstore(s1)
       case Opcode.SLOAD => sload(s1)
       case Opcode.SSTORE => sstore(s1)
+
+      case Opcode.JUMP => jump(s1)
+      case Opcode.JUMPI => jumpi(s1)
+      case Opcode.RETURN => returnOp(s1)
+      case Opcode.REVERT => revertOp(s1)
 
       case _ => s1.fail
   }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))
