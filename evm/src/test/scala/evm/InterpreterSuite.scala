@@ -5,7 +5,7 @@ import evm.core.Word256
 
 class InterpreterSuite extends munit.FunSuite {
 
-  val MAX: BigInt = BigInt(2).pow(256) - 1
+  val MAX: BigInt = evm.proofs.EvmMath.MAX_VALUE
 
   def code(bytes: Int*): Code =
     Code(bytes.foldRight(Nil[BigInt](): List[BigInt])((b, acc) => Cons(BigInt(b), acc)))

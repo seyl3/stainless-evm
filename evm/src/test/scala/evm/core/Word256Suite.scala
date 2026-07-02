@@ -1,10 +1,12 @@
 package evm.core
 
+import evm.proofs.EvmMath
+
 class Word256Suite extends munit.FunSuite {
 
-  val MOD: BigInt = BigInt(2).pow(256)
-  val MAX: BigInt = MOD - 1
-  val MIN: BigInt = BigInt(2).pow(255)
+  val MOD: BigInt = EvmMath.MODULO
+  val MAX: BigInt = EvmMath.MAX_VALUE
+  val MIN: BigInt = EvmMath.SIGN_BOUND
 
   def w(n: BigInt): Word256 = Word256(n)
   def sw(n: BigInt): Word256 = Word256(((n % MOD) + MOD) % MOD)

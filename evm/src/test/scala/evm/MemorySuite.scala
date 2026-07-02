@@ -6,7 +6,7 @@ import evm.proofs.Bytes
 
 class MemorySuite extends munit.FunSuite {
 
-  val MAX: BigInt = BigInt(2).pow(256) - 1
+  val MAX: BigInt = evm.proofs.EvmMath.MAX_VALUE
 
   def w(n: BigInt): Word256 = Word256(n)
 
