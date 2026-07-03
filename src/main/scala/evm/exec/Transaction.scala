@@ -51,6 +51,7 @@ object Transaction:
       } else BigInt(0)
     val gasUsed = gasUsed0 - refund
     if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, fin.storage)
+    else if (fin.status == Status.Reverted) TxResult(Status.Reverted, gasUsed0, BigInt(0), Nil(), fin.returnData, Storage.empty)
     else TxResult(fin.status, gasUsed0, BigInt(0), Nil(), Nil(), Storage.empty)
   }.ensuring(r => r.gasUsed >= 0 && r.gasRefunded >= 0)
 

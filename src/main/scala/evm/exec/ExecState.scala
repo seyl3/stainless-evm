@@ -71,12 +71,12 @@ case class ExecState(
 
   def halt: ExecState = {
     copy(status = Status.Halted)
-  }.ensuring(r => !r.isRunning && r.gas == gas)
+  }.ensuring(r => r == copy(status = Status.Halted))
 
   def revert: ExecState = {
     copy(status = Status.Reverted)
-  }.ensuring(r => !r.isRunning && r.gas == gas)
+  }.ensuring(r => r == copy(status = Status.Reverted))
 
   def fail: ExecState = {
     copy(status = Status.Failed, gas = 0)
-  }.ensuring(r => !r.isRunning)
+  }.ensuring(r => r == copy(status = Status.Failed, gas = 0))

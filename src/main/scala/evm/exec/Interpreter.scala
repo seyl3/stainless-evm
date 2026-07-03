@@ -322,9 +322,15 @@ object Interpreter:
       val (l, t2) = t1.pop()
       val extra = if (l.value == 0) BigInt(0) else memExpandCost(st, o.value + l.value)
       if (st.outOfGas(extra)) st.fail
-      else st.chargeGas(extra).copy(stack = t2).halt
+      else st.chargeGas(extra).copy(stack = t2,
+             returnData = Bytes.readList(st.memory.data, o.value, l.value),
+             memory = if (l.value == 0) st.memory else st.memory.expand(o.value + l.value)).halt
     }
-  }.ensuring(r => !r.isRunning && r.gas <= st.gas)
+  }.ensuring(r =>
+    !r.isRunning && r.gas <= st.gas
+    && (r.status == Status.Halted ==>
+         (st.stack.data.size >= 2
+          && r.returnData == Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value))))
 
   def revertOp(st: ExecState): ExecState = {
     if (st.stack.data.size < 2) st.fail
@@ -333,9 +339,15 @@ object Interpreter:
       val (l, t2) = t1.pop()
       val extra = if (l.value == 0) BigInt(0) else memExpandCost(st, o.value + l.value)
       if (st.outOfGas(extra)) st.fail
-      else st.chargeGas(extra).copy(stack = t2).revert
+      else st.chargeGas(extra).copy(stack = t2,
+             returnData = Bytes.readList(st.memory.data, o.value, l.value),
+             memory = if (l.value == 0) st.memory else st.memory.expand(o.value + l.value)).revert
     }
-  }.ensuring(r => !r.isRunning && r.gas <= st.gas)
+  }.ensuring(r =>
+    !r.isRunning && r.gas <= st.gas
+    && (r.status == Status.Reverted ==>
+         (st.stack.data.size >= 2
+          && r.returnData == Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value))))
 
   def calldataload(st: ExecState): ExecState = {
     if (st.stack.data.isEmpty) st.fail

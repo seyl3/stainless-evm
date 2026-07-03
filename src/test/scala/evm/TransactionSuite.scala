@@ -48,6 +48,23 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.storage.load(Word256(BigInt(1))).value, BigInt(0))
   }
 
+  test("RETURN sets the transaction output to the returned memory region") {
+    // MSTORE8 0xAB at offset 0, then RETURN offset 0 length 1
+    val program = code(0x60, 0xAB, 0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xF3)
+    val res = Transaction.run(tx(30000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData.size, BigInt(1))
+    assertEquals(res.returnData.head, BigInt(0xAB))
+  }
+
+  test("REVERT returns its data at the transaction boundary") {
+    val program = code(0x60, 0xAB, 0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xFD)
+    val res = Transaction.run(tx(30000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Reverted)
+    assertEquals(res.returnData.size, BigInt(1))
+    assertEquals(res.returnData.head, BigInt(0xAB))
+  }
+
   test("intrinsic gas charges 16 per nonzero and 4 per zero calldata byte") {
     val data: List[BigInt] = Cons(BigInt(0x00), Cons(BigInt(0xFF), Nil()))
     assertEquals(Transaction.intrinsicGas(data), BigInt(21000 + 4 + 16))
