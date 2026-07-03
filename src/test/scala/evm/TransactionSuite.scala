@@ -65,6 +65,13 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.returnData.head, BigInt(0xAB))
   }
 
+  test("the recipient account is pre-warmed so BALANCE on self is warm") {
+    // PUSH2 0x1000 (== to), BALANCE, STOP: warm access costs 100, not cold 2600
+    val res = Transaction.run(tx(30000), BlockContext.empty, worldWith(code(0x61, 0x10, 0x00, 0x31, 0x00)))
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.gasUsed, BigInt(21103))
+  }
+
   test("intrinsic gas charges 16 per nonzero and 4 per zero calldata byte") {
     val data: List[BigInt] = Cons(BigInt(0x00), Cons(BigInt(0xFF), Nil()))
     assertEquals(Transaction.intrinsicGas(data), BigInt(21000 + 4 + 16))

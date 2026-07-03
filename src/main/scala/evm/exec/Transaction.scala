@@ -28,6 +28,11 @@ case class TxResult(
 
 object Transaction:
 
+  val precompiles: Set[Address] = Set(
+    Address(BigInt(1)), Address(BigInt(2)), Address(BigInt(3)), Address(BigInt(4)),
+    Address(BigInt(5)), Address(BigInt(6)), Address(BigInt(7)), Address(BigInt(8)),
+    Address(BigInt(9)), Address(BigInt(10)), Address(BigInt(256)))
+
   def dataGas(data: List[BigInt]): BigInt = {
     decreases(data)
     data match
@@ -64,6 +69,7 @@ object Transaction:
       val txctx = TxContext(tx.origin, tx.gasPrice)
       val msg = MessageContext(tx.to, tx.origin, tx.value, tx.data)
       val init = ExecState.initialWith(world.codeOf(tx.to), execGas, block, txctx, msg, world)
+        .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase))
       settle(tx.gasLimit, Interpreter.run(init))
     }
   }
