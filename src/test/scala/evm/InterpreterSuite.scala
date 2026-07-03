@@ -409,6 +409,27 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(s.status, Status.Failed)
   }
 
+  test("BLOCKHASH returns a recent block's hash and zero out of window") {
+    val block = BlockContext.empty.copy(number = Word256(BigInt(100)),
+      blockHashes = stainless.lang.Map(Word256(BigInt(99)) -> Word256(BigInt(0xABCD))))
+    val hit = runWith(1000, block, TxContext.empty, MessageContext.empty, WorldState.empty, 0x60, 0x63, 0x40, 0x00)
+    assertEquals(hit.stack.peek(0).value, BigInt(0xABCD))
+    // block 100 is the current block: not < number, so zero
+    val cur = runWith(1000, block, TxContext.empty, MessageContext.empty, WorldState.empty, 0x60, 0x64, 0x40, 0x00)
+    assertEquals(cur.stack.peek(0).value, BigInt(0))
+  }
+
+  test("BLOBHASH returns the indexed versioned hash or zero out of range") {
+    val tx = TxContext(Address.zero, Word256.Zero,
+      Cons(Word256(BigInt(0x1111)), Cons(Word256(BigInt(0x2222)), Nil())))
+    val h0 = runWith(1000, BlockContext.empty, tx, MessageContext.empty, WorldState.empty, 0x60, 0x00, 0x49, 0x00)
+    assertEquals(h0.stack.peek(0).value, BigInt(0x1111))
+    val h1 = runWith(1000, BlockContext.empty, tx, MessageContext.empty, WorldState.empty, 0x60, 0x01, 0x49, 0x00)
+    assertEquals(h1.stack.peek(0).value, BigInt(0x2222))
+    val oob = runWith(1000, BlockContext.empty, tx, MessageContext.empty, WorldState.empty, 0x60, 0x05, 0x49, 0x00)
+    assertEquals(oob.stack.peek(0).value, BigInt(0))
+  }
+
   test("an unsupported opcode fails") {
     val s = run(1000, 0xF1)
     assertEquals(s.status, Status.Failed)
