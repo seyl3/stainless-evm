@@ -5,6 +5,7 @@ import evm.value.Word256
 import evm.math.Gas
 import evm.math.EvmMath
 import evm.math.EvmMath.MAX_VALUE
+import evm.math.ByteList
 import evm.state.Stack
 import evm.code.Opcode
 import evm.env.Address
@@ -332,6 +333,78 @@ object Interpreter:
     }
   }.ensuring(r => !r.isRunning && r.gas <= st.gas)
 
+  def calldataload(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else {
+      val (o, t) = st.stack.pop()
+      EvmMath.pow256Le(32)
+      st.copy(stack = t.push(Word256(ByteList.readWord(st.msg.callData, o.value, 32)))).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty && r.pc == st.pc + 1
+          && r.stack.data.head.value == ByteList.readWord(st.msg.callData, st.stack.data.head.value, 32)
+          && r.stack.data.tail == st.stack.data.tail)))
+
+  def calldatacopy(st: ExecState): ExecState = {
+    if (st.stack.data.size < 3) st.fail
+    else {
+      val (d, t1) = st.stack.pop()
+      val (o, t2) = t1.pop()
+      val (l, t3) = t2.pop()
+      val extra = if (l.value == 0) BigInt(0) else 3 * Gas.words(l.value) + memExpandCost(st, d.value + l.value)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t3,
+             memory = st.memory.copyIn(d.value, st.msg.callData, o.value, l.value)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 3 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail.tail
+          && r.memory == st.memory.copyIn(st.stack.data.head.value, st.msg.callData,
+               st.stack.data.tail.head.value, st.stack.data.tail.tail.head.value))))
+
+  def codecopy(st: ExecState): ExecState = {
+    if (st.stack.data.size < 3) st.fail
+    else {
+      val (d, t1) = st.stack.pop()
+      val (o, t2) = t1.pop()
+      val (l, t3) = t2.pop()
+      val extra = if (l.value == 0) BigInt(0) else 3 * Gas.words(l.value) + memExpandCost(st, d.value + l.value)
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t3,
+             memory = st.memory.copyIn(d.value, st.code.code, o.value, l.value)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 3 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail.tail
+          && r.memory == st.memory.copyIn(st.stack.data.head.value, st.code.code,
+               st.stack.data.tail.head.value, st.stack.data.tail.tail.head.value))))
+
+  def returndatacopy(st: ExecState): ExecState = {
+    if (st.stack.data.size < 3) st.fail
+    else {
+      val (d, t1) = st.stack.pop()
+      val (o, t2) = t1.pop()
+      val (l, t3) = t2.pop()
+      if (o.value + l.value > st.returnData.size) st.fail
+      else {
+        val extra = if (l.value == 0) BigInt(0) else 3 * Gas.words(l.value) + memExpandCost(st, d.value + l.value)
+        if (st.outOfGas(extra)) st.fail
+        else st.chargeGas(extra).copy(stack = t3,
+               memory = st.memory.copyIn(d.value, st.returnData, o.value, l.value)).advancePc(1)
+      }
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 3 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail.tail)))
+
   def execute(s1: ExecState, op: Opcode): ExecState = {
     op match
       case Opcode.STOP => s1.halt
@@ -489,6 +562,14 @@ object Interpreter:
       case Opcode.JUMPI => jumpi(s1)
       case Opcode.RETURN => returnOp(s1)
       case Opcode.REVERT => revertOp(s1)
+
+      case Opcode.CALLDATALOAD => calldataload(s1)
+      case Opcode.CALLDATACOPY => calldatacopy(s1)
+      case Opcode.CODECOPY => codecopy(s1)
+      case Opcode.RETURNDATACOPY => returndatacopy(s1)
+      case Opcode.RETURNDATASIZE =>
+        if (s1.returnData.size > MAX_VALUE) s1.fail
+        else pushConst(s1, Word256(s1.returnData.size))
 
       case _ => s1.fail
   }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))

@@ -39,7 +39,7 @@ case class ExecState(
   depth: BigInt,
   static: Boolean,
   status: Status,
-  returnData: List[Int],
+  returnData: List[BigInt],
   block: BlockContext,
   tx: TxContext,
   msg: MessageContext,
