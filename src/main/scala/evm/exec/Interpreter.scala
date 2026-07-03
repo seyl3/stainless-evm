@@ -606,6 +606,8 @@ object Interpreter:
         if (s1.gas > MAX_VALUE) s1.fail
         else pushConst(s1, Word256(s1.gas))
 
+      case Opcode.BLOCKHASH => unop(s1, num => s1.block.blockHash(num))
+      case Opcode.BLOBHASH => unop(s1, idx => s1.tx.blobHash(idx))
       case Opcode.BALANCE => balanceOp(s1)
       case Opcode.EXTCODESIZE => extcodesizeOp(s1)
       case Opcode.TLOAD => tload(s1)
