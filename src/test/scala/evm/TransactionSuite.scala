@@ -97,6 +97,32 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.world.storageOf(to).load(Word256.Zero).value, BigInt(0))
   }
 
+  val callee: Address = Address(BigInt(0x2000))
+
+  // caller: STATICCALL(gas=50000, callee, no args, no ret), then MSTORE8 the
+  // success flag at 0 and RETURN 1 byte.
+  def callerReturningFlag: Code = code(
+    0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x61, 0x20, 0x00, 0x61, 0xC3, 0x50, 0xFA,
+    0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xF3)
+
+  test("STATICCALL runs a child frame and returns its success flag") {
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256.Zero, callerReturningFlag),
+      callee -> Account(Word256.Zero, code(0x00))))   // callee: STOP -> success
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData.head, BigInt(1))
+  }
+
+  test("STATICCALL to a failing callee returns zero") {
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256.Zero, callerReturningFlag),
+      callee -> Account(Word256.Zero, code(0xFE))))    // callee: INVALID -> failure
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData.head, BigInt(0))
+  }
+
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
