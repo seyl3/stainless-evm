@@ -1,6 +1,7 @@
 package evm.math
 
 import stainless.lang.*
+import stainless.collection.*
 import stainless.annotation.*
 import stainless.proof.*
 import evm.math.EvmMath.pow
@@ -87,6 +88,14 @@ object Bytes {
     decreases(len)
     if (len == 0) dst
     else copyBytes(orig, setByteOf(dst, to, getByteOf(orig, from)), to + 1, from + 1, len - 1)
+  }
+
+  def copyFromList(dst: Map[BigInt, BigInt], to: BigInt,
+                   src: List[BigInt], from: BigInt, len: BigInt): Map[BigInt, BigInt] = {
+    require(from >= 0 && len >= 0)
+    decreases(len)
+    if (len == 0) dst
+    else copyFromList(setByteOf(dst, to, ByteList.byteOrZero(src, from)), to + 1, src, from + 1, len - 1)
   }
 
   @ghost

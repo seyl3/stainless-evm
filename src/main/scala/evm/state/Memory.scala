@@ -1,6 +1,7 @@
 package evm.state
 
 import stainless.lang.*
+import stainless.collection.*
 import stainless.annotation.*
 import stainless.proof.*
 import evm.value.Word256
@@ -62,6 +63,15 @@ case class Memory(data: Map[BigInt, BigInt], size: BigInt) {
     r.data == Bytes.copyBytes(data, data, dst, src, len)
     && r.size >= size
     && (len == 0 || (r.size >= dst + len && r.size >= src + len)))
+
+  def copyIn(dst: BigInt, src: List[BigInt], srcOffset: BigInt, len: BigInt): Memory = {
+    require(dst >= 0 && srcOffset >= 0 && len >= 0)
+    val newSize = if (len == 0) size else expandedTo(dst + len)
+    Memory(Bytes.copyFromList(data, dst, src, srcOffset, len), newSize)
+  }.ensuring(r =>
+    r.data == Bytes.copyFromList(data, dst, src, srcOffset, len)
+    && r.size >= size
+    && (len == 0 || r.size >= dst + len))
 
   @ghost
   def storePreservesOutside(offset: BigInt, w: Word256, x: BigInt): Boolean = {

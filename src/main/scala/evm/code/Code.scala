@@ -6,6 +6,7 @@ import evm.value.Word256
 import evm.math.EvmMath
 import evm.math.EvmMath.pow
 import evm.math.Bytes
+import evm.math.ByteList
 
 object Code:
   def empty: Code = Code(Nil())
@@ -44,14 +45,12 @@ case class Code(code: List[BigInt]):
 
   def byteOrZero(i: BigInt): BigInt = {
     require(i >= 0)
-    if (i < code.size) Bytes.emod256(code(i)) else BigInt(0)
+    ByteList.byteOrZero(code, i)
   }.ensuring(r => 0 <= r && r < 256)
 
   def immediateValue(start: BigInt, n: BigInt): BigInt = {
     require(start >= 0 && 0 <= n && n <= 32)
-    decreases(n)
-    if (n == 0) BigInt(0)
-    else byteOrZero(start) * pow(BigInt(256), n - 1) + immediateValue(start + 1, n - 1)
+    ByteList.readWord(code, start, n)
   }.ensuring(r => 0 <= r && r < pow(BigInt(256), n))
 
   def pushValue(start: BigInt, n: BigInt): Word256 = {
