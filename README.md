@@ -66,11 +66,11 @@ src/main/scala/evm/
   env/     the execution environment (kept in its own package to avoid the Address/ADDRESS case collision)
     Address.scala              The 160-bit account address type
     Context.scala              Block, transaction, and message (call frame) context records
-    WorldState.scala           Accounts (balance, code) keyed by address, with default-zero lookups
+    WorldState.scala           Accounts (balance, code, storage) keyed by address, with default-zero lookups and storage commit
     Log.scala                  An emitted log record: address, topics, and data bytes
   exec/    the machine
     ExecState.scala            Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data, block/tx/message/world context, accessed sets, logs and the refund counter
-    Transaction.scala          The transaction layer: intrinsic gas, top-level entry (run), and gas settlement with the EIP-3529 capped refund
+    Transaction.scala          The transaction layer: intrinsic gas, top-level entry (run), recipient storage load/commit, and gas settlement with the EIP-3529 capped refund
     Interpreter.scala          The step/run dispatch loop: arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas, the read-only environment ops (ADDRESS, CALLER, CALLVALUE, ORIGIN, block/tx fields, SELFBALANCE, CODESIZE, PC, GAS), world reads with account cold/warm (BALANCE, EXTCODESIZE), storage (SLOAD/SSTORE with cold/warm and the EIP-2200 charge, TLOAD/TSTORE), control flow (JUMP/JUMPI against verified JUMPDEST analysis, RETURN, REVERT), the calldata/code copy ops (CALLDATALOAD, CALLDATACOPY, CODECOPY, RETURNDATASIZE, RETURNDATACOPY), and LOG0-4 (emitting to a log accumulator); proven-terminating run
 src/test/scala/evm/            munit unit tests, one suite per type (Word256, Stack, Memory, Storage, Gas, Opcode, Code, ExecState, Interpreter, Context)
 build.sbt                      Single Stainless project (Stainless runs on every compile)
