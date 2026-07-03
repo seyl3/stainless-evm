@@ -98,6 +98,13 @@ object Bytes {
     else copyFromList(setByteOf(dst, to, ByteList.byteOrZero(src, from)), to + 1, src, from + 1, len - 1)
   }
 
+  def readList(data: Map[BigInt, BigInt], from: BigInt, len: BigInt): List[BigInt] = {
+    require(len >= 0)
+    decreases(len)
+    if (len == 0) Nil[BigInt]()
+    else Cons(getByteOf(data, from), readList(data, from + 1, len - 1))
+  }.ensuring(r => r.size == len)
+
   @ghost
   def copyByteAt(orig: Map[BigInt, BigInt], dst: Map[BigInt, BigInt],
                  to: BigInt, from: BigInt, len: BigInt, k: BigInt): Boolean = {
