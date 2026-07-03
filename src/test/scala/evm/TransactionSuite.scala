@@ -45,7 +45,7 @@ class TransactionSuite extends munit.FunSuite {
     val res = Transaction.run(tx(30000), BlockContext.empty, worldWith(code(0x60, 0x00, 0x60, 0x00, 0xFD)))
     assertEquals(res.status, Status.Reverted)
     assertEquals(res.gasRefunded, BigInt(0))
-    assertEquals(res.storage.load(Word256(BigInt(1))).value, BigInt(0))
+    assertEquals(res.world.storageOf(to).load(Word256(BigInt(1))).value, BigInt(0))
   }
 
   test("RETURN sets the transaction output to the returned memory region") {
@@ -75,6 +75,26 @@ class TransactionSuite extends munit.FunSuite {
   test("intrinsic gas charges 16 per nonzero and 4 per zero calldata byte") {
     val data: List[BigInt] = Cons(BigInt(0x00), Cons(BigInt(0xFF), Nil()))
     assertEquals(Transaction.intrinsicGas(data), BigInt(21000 + 4 + 16))
+  }
+
+  test("storage persists across transactions through the world state") {
+    // contract increments slot 0: PUSH0key SLOAD PUSH1 ADD PUSH0key SSTORE STOP
+    val counter = code(0x60, 0x00, 0x54, 0x60, 0x01, 0x01, 0x60, 0x00, 0x55, 0x00)
+    val w0 = worldWith(counter)
+    val r1 = Transaction.run(tx(100000), BlockContext.empty, w0)
+    assertEquals(r1.status, Status.Halted)
+    assertEquals(r1.world.storageOf(to).load(Word256.Zero).value, BigInt(1))
+    // second tx runs against the world produced by the first
+    val r2 = Transaction.run(tx(100000), BlockContext.empty, r1.world)
+    assertEquals(r2.world.storageOf(to).load(Word256.Zero).value, BigInt(2))
+  }
+
+  test("a reverting transaction does not persist its storage writes") {
+    // SSTORE slot 0 = 7, then REVERT
+    val program = code(0x60, 0x07, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xFD)
+    val res = Transaction.run(tx(100000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Reverted)
+    assertEquals(res.world.storageOf(to).load(Word256.Zero).value, BigInt(0))
   }
 
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
