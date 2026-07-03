@@ -13,6 +13,13 @@ import evm.code.Opcode
 import evm.env.Address
 import evm.env.Log
 
+// Result of preparing a call: either a state to continue the parent from (the
+// call was rejected or the frame failed), or a child frame to run plus the
+// gas-forwarded parent to merge the result into.
+sealed abstract class CallPrep
+case class CallReject(state: ExecState) extends CallPrep
+case class CallEnter(child: ExecState, parentForwarded: ExecState, rest: Stack, forwarded: BigInt) extends CallPrep
+
 object Interpreter:
 
   def memExpandCost(st: ExecState, end: BigInt): BigInt = {
@@ -652,10 +659,62 @@ object Interpreter:
           else execute(s.chargeGas(cost), op)
   }.ensuring(r => !r.isRunning || r.gas < s.gas)
 
+  // Pop the 6 STATICCALL args, charge the base cost, and either reject the call
+  // (continue the parent) or build the child frame and the gas-forwarded parent.
+  def prepareStaticCall(s: ExecState): CallPrep = {
+    require(s.isRunning)
+    if (s.stack.data.size < 6) CallReject(s.fail)
+    else {
+      val (gasReq, a1) = s.stack.pop()
+      val (addr, a2) = a1.pop()
+      val (argsOff, a3) = a2.pop()
+      val (argsLen, a4) = a3.pop()
+      val (retOff, a5) = a4.pop()
+      val (retLen, rest) = a5.pop()
+      if (s.outOfGas(100)) CallReject(s.fail)
+      else {
+        val s1 = s.chargeGas(100)
+        if (s1.depth >= ExecState.MAX_DEPTH) {
+          if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CallReject(s1.fail)
+          else CallReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
+        } else {
+          val avail = s1.gas - s1.gas / 64
+          val g = if (gasReq.value < avail) gasReq.value else avail
+          val callee = Address.fromWord(addr)
+          val callData = Bytes.readList(s1.memory.data, argsOff.value, argsLen.value)
+          val child = ExecState.subFrame(s1.world.codeOf(callee), callee, s1.msg.self, Word256.Zero,
+            callData, g, s1.depth + 1, true, s1.block, s1.tx, s1.world, s1.world.storageOf(callee),
+            s1.accessedAccounts ++ Set(callee))
+          CallEnter(child, s1.chargeGas(g), rest, g)
+        }
+      }
+    }
+  }.ensuring(r => r match
+    case CallReject(sr) => !sr.isRunning || sr.gas < s.gas
+    case CallEnter(child, pf, rest, g) => g >= 0 && pf.gas >= 0 && child.gas < s.gas && pf.gas + g < s.gas)
+
+  // Merge a finished child frame into the parent: push success (1/0), refund the
+  // child's unused gas (capped at what was forwarded), and advance past the call.
+  def mergeStaticCall(enter: CallEnter, childRes: ExecState): ExecState = {
+    require(enter.parentForwarded.gas >= 0 && enter.forwarded >= 0)
+    val success = childRes.status == Status.Halted
+    val refund = if (childRes.gas < enter.forwarded) childRes.gas else enter.forwarded
+    if (enter.rest.data.size >= Stack.MAXIMUM_STACK_SIZE) enter.parentForwarded.fail
+    else enter.parentForwarded.copy(
+      gas = enter.parentForwarded.gas + refund,
+      stack = enter.rest.push(if (success) Word256.One else Word256.Zero)).advancePc(1)
+  }.ensuring(r => r.gas <= enter.parentForwarded.gas + enter.forwarded)
+
   def run(s: ExecState): ExecState = {
     decreases(s.gas)
     if (!s.isRunning) s
-    else {
+    else if (s.pc < s.code.size && s.code.opcodeAt(s.pc) == Some(Opcode.STATICCALL)) {
+      prepareStaticCall(s) match
+        case CallReject(sr) => if (!sr.isRunning) sr else run(sr)
+        case ce: CallEnter =>
+          val parent2 = mergeStaticCall(ce, run(ce.child))
+          if (!parent2.isRunning) parent2 else run(parent2)
+    } else {
       val s1 = step(s)
       if (!s1.isRunning) s1 else run(s1)
     }

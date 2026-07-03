@@ -28,6 +28,18 @@ object ExecState:
       Set.empty[Address], Storage.empty, Set.empty[Word256], Nil(), BigInt(0))
   }
 
+  // A fresh child call frame: empty stack/memory/transient at pc 0, the callee's
+  // code and storage, the forwarded gas, and depth+1. Warm accounts are inherited
+  // from the parent (EIP-2929 accessed set is transaction-global).
+  def subFrame(code: Code, callee: Address, caller: Address, value: Word256, callData: List[BigInt],
+               gas: BigInt, depth: BigInt, static: Boolean, block: BlockContext, tx: TxContext,
+               world: WorldState, storage: Storage, accessedAccounts: Set[Address]): ExecState = {
+    require(gas >= 0 && depth >= 0 && depth <= MAX_DEPTH)
+    ExecState(code, Stack.empty, Memory.empty, storage, Storage.empty, BigInt(0), gas, depth, static,
+      Status.Running, Nil(), block, tx, MessageContext(callee, caller, value, callData), world,
+      accessedAccounts, storage, Set.empty[Word256], Nil(), BigInt(0))
+  }.ensuring(r => r.gas == gas && r.depth == depth && r.isRunning)
+
 case class ExecState(
   code: Code,
   stack: Stack,
