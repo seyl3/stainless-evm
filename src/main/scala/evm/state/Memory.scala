@@ -7,6 +7,7 @@ import stainless.proof.*
 import evm.value.Word256
 import evm.math.EvmMath
 import evm.math.Bytes
+import evm.math.ByteList
 
 object Memory {
   def empty: Memory = Memory(Map.empty[BigInt, BigInt], BigInt(0))
@@ -95,6 +96,22 @@ case class Memory(data: Map[BigInt, BigInt], size: BigInt) {
     (mcopy(dst, src, len).getByte(x) == getByte(x)) because {
       if (x < dst) Bytes.copyBytesPreservesBefore(data, data, dst, src, len, x)
       else Bytes.copyBytesPreservesAfter(data, data, dst, src, len, x)
+    }
+  }.holds
+
+  @ghost
+  def copyInByteAt(dst: BigInt, src: List[BigInt], srcOffset: BigInt, len: BigInt, k: BigInt): Boolean = {
+    require(dst >= 0 && srcOffset >= 0 && len >= 0 && 0 <= k && k < len)
+    (copyIn(dst, src, srcOffset, len).getByte(dst + k) == ByteList.byteOrZero(src, srcOffset + k)) because
+      Bytes.copyFromListAt(data, dst, src, srcOffset, len, k)
+  }.holds
+
+  @ghost
+  def copyInPreservesOutside(dst: BigInt, src: List[BigInt], srcOffset: BigInt, len: BigInt, x: BigInt): Boolean = {
+    require(dst >= 0 && srcOffset >= 0 && len >= 0 && (x < dst || x >= dst + len))
+    (copyIn(dst, src, srcOffset, len).getByte(x) == getByte(x)) because {
+      if (x < dst) Bytes.copyFromListPreservesBefore(data, dst, src, srcOffset, len, x)
+      else Bytes.copyFromListPreservesAfter(data, dst, src, srcOffset, len, x)
     }
   }.holds
 }

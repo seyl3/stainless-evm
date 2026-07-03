@@ -146,4 +146,56 @@ object Bytes {
       }
     }
   }.holds
+
+  @ghost
+  def copyFromListPreservesBefore(dst: Map[BigInt, BigInt], to: BigInt,
+                                  src: List[BigInt], from: BigInt, len: BigInt, x: BigInt): Boolean = {
+    require(from >= 0 && len >= 0 && x < to)
+    decreases(len)
+    (getByteOf(copyFromList(dst, to, src, from, len), x) == getByteOf(dst, x)) because {
+      if (len == 0) trivial
+      else {
+        val dst2 = setByteOf(dst, to, ByteList.byteOrZero(src, from))
+        copyFromListPreservesBefore(dst2, to + 1, src, from + 1, len - 1, x) &&
+        getByteOf(dst2, x) == getByteOf(dst, x)
+      }
+    }
+  }.holds
+
+  @ghost
+  def copyFromListPreservesAfter(dst: Map[BigInt, BigInt], to: BigInt,
+                                 src: List[BigInt], from: BigInt, len: BigInt, x: BigInt): Boolean = {
+    require(from >= 0 && len >= 0 && x >= to + len)
+    decreases(len)
+    (getByteOf(copyFromList(dst, to, src, from, len), x) == getByteOf(dst, x)) because {
+      if (len == 0) trivial
+      else {
+        val dst2 = setByteOf(dst, to, ByteList.byteOrZero(src, from))
+        copyFromListPreservesAfter(dst2, to + 1, src, from + 1, len - 1, x) &&
+        getByteOf(dst2, x) == getByteOf(dst, x)
+      }
+    }
+  }.holds
+
+  @ghost
+  def copyFromListAt(dst: Map[BigInt, BigInt], to: BigInt,
+                     src: List[BigInt], from: BigInt, len: BigInt, k: BigInt): Boolean = {
+    require(from >= 0 && len >= 0 && 0 <= k && k < len)
+    decreases(len)
+    (getByteOf(copyFromList(dst, to, src, from, len), to + k) == ByteList.byteOrZero(src, from + k)) because {
+      val dst2 = setByteOf(dst, to, ByteList.byteOrZero(src, from))
+      if (k == 0) copyFromListPreservesBefore(dst2, to + 1, src, from + 1, len - 1, to)
+      else copyFromListAt(dst2, to + 1, src, from + 1, len - 1, k - 1)
+    }
+  }.holds
+
+  @ghost
+  def readListAt(data: Map[BigInt, BigInt], from: BigInt, len: BigInt, k: BigInt): Boolean = {
+    require(len >= 0 && 0 <= k && k < len)
+    decreases(len)
+    (readList(data, from, len)(k) == getByteOf(data, from + k)) because {
+      if (k == 0) trivial
+      else readListAt(data, from + 1, len - 1, k - 1)
+    }
+  }.holds
 }
