@@ -380,6 +380,35 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(oor.status, Status.Failed)
   }
 
+  test("LOG1 emits a log with the executing address, one topic and the data") {
+    val self = Address(BigInt(0x99))
+    val msg = MessageContext(self, Address.zero, Word256.Zero, Nil())
+    val s = runWith(30000, BlockContext.empty, TxContext.empty, msg, WorldState.empty,
+      0x60, 0x2A, 0x60, 0x00, 0x52,
+      0x60, 0xAA, 0x60, 0x20, 0x60, 0x00, 0xA1, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.logs.size, BigInt(1))
+    assertEquals(s.logs.head.address.value, BigInt(0x99))
+    assertEquals(s.logs.head.topics.size, BigInt(1))
+    assertEquals(s.logs.head.topics.head.value, BigInt(0xAA))
+    assertEquals(s.logs.head.data.size, BigInt(32))
+  }
+
+  test("LOG0 emits a log with no topics and consumes offset and length") {
+    val s = run(30000, 0x60, 0x00, 0x60, 0x00, 0xA0, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.logs.size, BigInt(1))
+    assertEquals(s.logs.head.topics.size, BigInt(0))
+    assertEquals(s.stack.data.size, BigInt(0))
+  }
+
+  test("LOG in a static context fails") {
+    val base = ExecState.initialWith(code(0x60, 0x00, 0x60, 0x00, 0xA0, 0x00), 30000,
+      BlockContext.empty, TxContext.empty, MessageContext.empty, WorldState.empty)
+    val s = Interpreter.run(base.copy(static = true))
+    assertEquals(s.status, Status.Failed)
+  }
+
   test("an unsupported opcode fails") {
     val s = run(1000, 0xF1)
     assertEquals(s.status, Status.Failed)
