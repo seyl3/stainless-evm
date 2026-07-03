@@ -23,7 +23,7 @@ case class TxResult(
   gasRefunded: BigInt,
   logs: List[Log],
   returnData: List[BigInt],
-  storage: Storage
+  world: WorldState
 )
 
 object Transaction:
@@ -51,7 +51,7 @@ object Transaction:
     BigInt(21000) + 10 * tokens(data)
   }.ensuring(r => r >= 21000)
 
-  def settle(gasLimit: BigInt, floor: BigInt, fin: ExecState): TxResult = {
+  def settle(gasLimit: BigInt, floor: BigInt, to: Address, world: WorldState, fin: ExecState): TxResult = {
     require(gasLimit >= 0 && 0 <= floor && floor <= gasLimit)
     val gasUsed0 = if (gasLimit >= fin.gas) gasLimit - fin.gas else BigInt(0)
     val success = fin.status == Status.Halted
@@ -63,9 +63,11 @@ object Transaction:
       } else BigInt(0)
     val afterRefund = gasUsed0 - refund
     val gasUsed = if (afterRefund < floor) floor else afterRefund
-    if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, fin.storage)
-    else if (fin.status == Status.Reverted) TxResult(Status.Reverted, gasUsed, BigInt(0), Nil(), fin.returnData, Storage.empty)
-    else TxResult(fin.status, gasUsed, BigInt(0), Nil(), Nil(), Storage.empty)
+    // On success the recipient's modified storage is committed to the world; a
+    // reverted or failed tx leaves the world unchanged (state rolled back).
+    if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, world.withStorage(to, fin.storage))
+    else if (fin.status == Status.Reverted) TxResult(Status.Reverted, gasUsed, BigInt(0), Nil(), fin.returnData, world)
+    else TxResult(fin.status, gasUsed, BigInt(0), Nil(), Nil(), world)
   }.ensuring(r => r.gasUsed >= 0 && r.gasRefunded >= 0)
 
   def run(tx: Transaction, block: BlockContext, world: WorldState): TxResult = {
@@ -73,13 +75,15 @@ object Transaction:
     val intrinsic = BigInt(21000) + 4 * t
     val floor = BigInt(21000) + 10 * t
     if (tx.gasLimit < floor)
-      TxResult(Status.Failed, tx.gasLimit, BigInt(0), Nil(), Nil(), Storage.empty)
+      TxResult(Status.Failed, tx.gasLimit, BigInt(0), Nil(), Nil(), world)
     else {
       val execGas = tx.gasLimit - intrinsic
       val txctx = TxContext(tx.origin, tx.gasPrice)
       val msg = MessageContext(tx.to, tx.origin, tx.value, tx.data)
+      val s = world.storageOf(tx.to)
       val init = ExecState.initialWith(world.codeOf(tx.to), execGas, block, txctx, msg, world)
-        .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase))
-      settle(tx.gasLimit, floor, Interpreter.run(init))
+        .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase),
+              storage = s, original = s)
+      settle(tx.gasLimit, floor, tx.to, world, Interpreter.run(init))
     }
   }
