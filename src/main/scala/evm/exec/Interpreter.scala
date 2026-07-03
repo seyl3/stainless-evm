@@ -271,7 +271,8 @@ object Interpreter:
       val extra = Gas.sstoreCost(st.original.load(k).value, st.storage.load(k).value, v.value, cold) - 100
       if (st.outOfGas(extra)) st.fail
       else st.chargeGas(extra).copy(stack = t2, storage = st.storage.store(k, v),
-             accessedSlots = st.accessedSlots ++ Set(k)).advancePc(1)
+             accessedSlots = st.accessedSlots ++ Set(k),
+             refund = st.refund + Gas.sstoreRefund(st.original.load(k).value, st.storage.load(k).value, v.value)).advancePc(1)
     }
   }.ensuring(r =>
     (!r.isRunning || r.gas <= st.gas)

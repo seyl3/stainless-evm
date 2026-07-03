@@ -70,4 +70,25 @@ object Gas {
       } else WARM_ACCESS
     base + (if (cold) COLD_SLOAD else BigInt(0))
   }.ensuring(r => r >= WARM_ACCESS)
+
+  val SSTORE_CLEARS: BigInt = 4800
+
+  def sstoreRefund(original: BigInt, current: BigInt, value: BigInt): BigInt = {
+    if (value == current) BigInt(0)
+    else if (current == original) {
+      if (original != 0 && value == 0) SSTORE_CLEARS else BigInt(0)
+    } else {
+      val cross =
+        if (original != 0) {
+          if (current == 0) -SSTORE_CLEARS
+          else if (value == 0) SSTORE_CLEARS
+          else BigInt(0)
+        } else BigInt(0)
+      val reset =
+        if (value == original) {
+          if (original == 0) SSTORE_SET - WARM_ACCESS else SSTORE_RESET - COLD_SLOAD - WARM_ACCESS
+        } else BigInt(0)
+      cross + reset
+    }
+  }
 }
