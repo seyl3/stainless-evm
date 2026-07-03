@@ -430,7 +430,10 @@ object Interpreter:
       val (more, remaining) = popTopics(rest, n - 1)
       (top :: more, remaining)
     }
-  }.ensuring(r => r._2.data.size == s.data.size - n)
+  }.ensuring(r =>
+    r._2.data.size == s.data.size - n
+    && r._1 == s.data.take(n)
+    && r._2.data == s.data.drop(n))
 
   def logN(st: ExecState, n: BigInt): ExecState = {
     require(0 <= n && n <= 4)
@@ -451,9 +454,11 @@ object Interpreter:
   }.ensuring(r =>
     (!r.isRunning || r.gas <= st.gas)
     && (r.isRunning ==>
-         (r.pc == st.pc + 1
-          && r.stack.data.size == st.stack.data.size - (2 + n)
-          && r.logs.size == st.logs.size + 1)))
+         (st.stack.data.size >= 2 + n
+          && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.drop(2 + n)
+          && r.logs == st.logs :+ Log(st.msg.self, st.stack.data.tail.tail.take(n),
+               Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value)))))
 
   def execute(s1: ExecState, op: Opcode): ExecState = {
     op match
