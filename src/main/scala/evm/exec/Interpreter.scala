@@ -1,14 +1,17 @@
 package evm.exec
 
 import stainless.lang.*
+import stainless.collection.*
 import evm.value.Word256
 import evm.math.Gas
 import evm.math.EvmMath
 import evm.math.EvmMath.MAX_VALUE
 import evm.math.ByteList
+import evm.math.Bytes
 import evm.state.Stack
 import evm.code.Opcode
 import evm.env.Address
+import evm.env.Log
 
 object Interpreter:
 
@@ -405,6 +408,40 @@ object Interpreter:
          (st.stack.data.size >= 3 && r.pc == st.pc + 1
           && r.stack.data == st.stack.data.tail.tail.tail)))
 
+  def popTopics(s: Stack, n: BigInt): (List[Word256], Stack) = {
+    require(n >= 0 && s.data.size >= n)
+    decreases(n)
+    if (n == 0) (Nil[Word256](), s)
+    else {
+      val (top, rest) = s.pop()
+      val (more, remaining) = popTopics(rest, n - 1)
+      (top :: more, remaining)
+    }
+  }.ensuring(r => r._2.data.size == s.data.size - n)
+
+  def logN(st: ExecState, n: BigInt): ExecState = {
+    require(0 <= n && n <= 4)
+    if (st.static || st.stack.data.size < 2 + n) st.fail
+    else {
+      val (o, t1) = st.stack.pop()
+      val (l, t2) = t1.pop()
+      val (topics, rest) = popTopics(t2, n)
+      val extra = 8 * l.value + (if (l.value == 0) BigInt(0) else memExpandCost(st, o.value + l.value))
+      if (st.outOfGas(extra)) st.fail
+      else {
+        val data = Bytes.readList(st.memory.data, o.value, l.value)
+        val mem = if (l.value == 0) st.memory else st.memory.expand(o.value + l.value)
+        st.chargeGas(extra).copy(stack = rest, memory = mem,
+          logs = st.logs :+ Log(st.msg.self, topics, data)).advancePc(1)
+      }
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (r.pc == st.pc + 1
+          && r.stack.data.size == st.stack.data.size - (2 + n)
+          && r.logs.size == st.logs.size + 1)))
+
   def execute(s1: ExecState, op: Opcode): ExecState = {
     op match
       case Opcode.STOP => s1.halt
@@ -570,6 +607,12 @@ object Interpreter:
       case Opcode.RETURNDATASIZE =>
         if (s1.returnData.size > MAX_VALUE) s1.fail
         else pushConst(s1, Word256(s1.returnData.size))
+
+      case Opcode.LOG0 => logN(s1, 0)
+      case Opcode.LOG1 => logN(s1, 1)
+      case Opcode.LOG2 => logN(s1, 2)
+      case Opcode.LOG3 => logN(s1, 3)
+      case Opcode.LOG4 => logN(s1, 4)
 
       case _ => s1.fail
   }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))

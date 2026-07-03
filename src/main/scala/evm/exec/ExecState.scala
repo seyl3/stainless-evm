@@ -5,7 +5,7 @@ import stainless.lang.*
 import evm.code.Code
 import evm.value.Word256
 import evm.state.{Stack, Memory, Storage}
-import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState}
+import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState, Log}
 
 enum Status:
   case Running
@@ -25,7 +25,7 @@ object ExecState:
     require(gas >= 0)
     ExecState(code, Stack.empty, Memory.empty, Storage.empty, Storage.empty,
       BigInt(0), gas, BigInt(0), false, Status.Running, Nil(), block, tx, msg, world,
-      Set.empty[Address], Storage.empty, Set.empty[Word256])
+      Set.empty[Address], Storage.empty, Set.empty[Word256], Nil())
   }
 
 case class ExecState(
@@ -46,7 +46,8 @@ case class ExecState(
   world: WorldState,
   accessedAccounts: Set[Address],
   original: Storage,
-  accessedSlots: Set[Word256]
+  accessedSlots: Set[Word256],
+  logs: List[Log]
 ):
   require(pc >= 0 && gas >= 0 && depth >= 0 && depth <= ExecState.MAX_DEPTH)
 
