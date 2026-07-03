@@ -351,6 +351,35 @@ class InterpreterSuite extends munit.FunSuite {
     assertEquals(swap.stack.peek(2).value, BigInt(3))
   }
 
+  test("CALLDATALOAD reads a 32-byte word from calldata, zero-padded") {
+    val cd: List[BigInt] = Cons(BigInt(0x11), Cons(BigInt(0x22), Nil()))
+    val msg = MessageContext(Address.zero, Address.zero, Word256.Zero, cd)
+    val s = runWith(1000, BlockContext.empty, TxContext.empty, msg, WorldState.empty, 0x60, 0x00, 0x35, 0x00)
+    assertEquals(s.stack.peek(0).value, BigInt(0x1122) * BigInt(2).pow(240))
+  }
+
+  test("CODECOPY copies code into memory and MLOAD reads it back") {
+    val s = run(30000, 0x60, 0x04, 0x60, 0x00, 0x60, 0x00, 0x39, 0x60, 0x00, 0x51, 0x00)
+    assertEquals(s.status, Status.Halted)
+    val top = s.stack.peek(0).value
+    assertEquals(top / BigInt(2).pow(248), BigInt(0x60))
+  }
+
+  test("CALLDATACOPY copies calldata into memory") {
+    val cd: List[BigInt] = Cons(BigInt(0xAB), Nil())
+    val msg = MessageContext(Address.zero, Address.zero, Word256.Zero, cd)
+    val s = runWith(30000, BlockContext.empty, TxContext.empty, msg, WorldState.empty,
+      0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0x37, 0x60, 0x00, 0x51, 0x00)
+    assertEquals(s.status, Status.Halted)
+    assertEquals(s.stack.peek(0).value / BigInt(2).pow(248), BigInt(0xAB))
+  }
+
+  test("RETURNDATASIZE is zero and RETURNDATACOPY out of range fails") {
+    assertEquals(run(1000, 0x3D, 0x00).stack.peek(0).value, BigInt(0))
+    val oor = run(30000, 0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0x3E, 0x00)
+    assertEquals(oor.status, Status.Failed)
+  }
+
   test("an unsupported opcode fails") {
     val s = run(1000, 0xF1)
     assertEquals(s.status, Status.Failed)
