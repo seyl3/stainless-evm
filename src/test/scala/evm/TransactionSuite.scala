@@ -76,4 +76,14 @@ class TransactionSuite extends munit.FunSuite {
     val data: List[BigInt] = Cons(BigInt(0x00), Cons(BigInt(0xFF), Nil()))
     assertEquals(Transaction.intrinsicGas(data), BigInt(21000 + 4 + 16))
   }
+
+  test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
+    val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
+    // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
+    val res = Transaction.run(
+      Transaction(Address(BigInt(1)), to, Word256.Zero, 30000, Word256.Zero, data),
+      BlockContext.empty, worldWith(code(0x00)))
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.gasUsed, BigInt(21080))
+  }
 }

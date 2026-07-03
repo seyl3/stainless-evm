@@ -33,19 +33,26 @@ object Transaction:
     Address(BigInt(5)), Address(BigInt(6)), Address(BigInt(7)), Address(BigInt(8)),
     Address(BigInt(9)), Address(BigInt(10)), Address(BigInt(256)))
 
-  def dataGas(data: List[BigInt]): BigInt = {
+  // EIP-7623 calldata tokens: 1 per zero byte, 4 per nonzero byte.
+  def tokens(data: List[BigInt]): BigInt = {
     decreases(data)
     data match
       case Nil() => BigInt(0)
-      case Cons(b, t) => (if (Bytes.emod256(b) == 0) BigInt(4) else BigInt(16)) + dataGas(t)
+      case Cons(b, t) => (if (Bytes.emod256(b) == 0) BigInt(1) else BigInt(4)) + tokens(t)
   }.ensuring(r => r >= 0)
 
+  // Standard intrinsic cost: 21000 + 4 per token (= 4 per zero byte, 16 per nonzero).
   def intrinsicGas(data: List[BigInt]): BigInt = {
-    BigInt(21000) + dataGas(data)
+    BigInt(21000) + 4 * tokens(data)
   }.ensuring(r => r >= 21000)
 
-  def settle(gasLimit: BigInt, fin: ExecState): TxResult = {
-    require(gasLimit >= 0)
+  // EIP-7623 floor: 21000 + 10 per token; a tx must pay at least this.
+  def floorGas(data: List[BigInt]): BigInt = {
+    BigInt(21000) + 10 * tokens(data)
+  }.ensuring(r => r >= 21000)
+
+  def settle(gasLimit: BigInt, floor: BigInt, fin: ExecState): TxResult = {
+    require(gasLimit >= 0 && 0 <= floor && floor <= gasLimit)
     val gasUsed0 = if (gasLimit >= fin.gas) gasLimit - fin.gas else BigInt(0)
     val success = fin.status == Status.Halted
     val refund =
@@ -54,15 +61,18 @@ object Transaction:
         val r = if (fin.refund < 0) BigInt(0) else fin.refund
         if (r < cap) r else cap
       } else BigInt(0)
-    val gasUsed = gasUsed0 - refund
+    val afterRefund = gasUsed0 - refund
+    val gasUsed = if (afterRefund < floor) floor else afterRefund
     if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, fin.storage)
-    else if (fin.status == Status.Reverted) TxResult(Status.Reverted, gasUsed0, BigInt(0), Nil(), fin.returnData, Storage.empty)
-    else TxResult(fin.status, gasUsed0, BigInt(0), Nil(), Nil(), Storage.empty)
+    else if (fin.status == Status.Reverted) TxResult(Status.Reverted, gasUsed, BigInt(0), Nil(), fin.returnData, Storage.empty)
+    else TxResult(fin.status, gasUsed, BigInt(0), Nil(), Nil(), Storage.empty)
   }.ensuring(r => r.gasUsed >= 0 && r.gasRefunded >= 0)
 
   def run(tx: Transaction, block: BlockContext, world: WorldState): TxResult = {
-    val intrinsic = intrinsicGas(tx.data)
-    if (tx.gasLimit < intrinsic)
+    val t = tokens(tx.data)
+    val intrinsic = BigInt(21000) + 4 * t
+    val floor = BigInt(21000) + 10 * t
+    if (tx.gasLimit < floor)
       TxResult(Status.Failed, tx.gasLimit, BigInt(0), Nil(), Nil(), Storage.empty)
     else {
       val execGas = tx.gasLimit - intrinsic
@@ -70,6 +80,6 @@ object Transaction:
       val msg = MessageContext(tx.to, tx.origin, tx.value, tx.data)
       val init = ExecState.initialWith(world.codeOf(tx.to), execGas, block, txctx, msg, world)
         .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase))
-      settle(tx.gasLimit, Interpreter.run(init))
+      settle(tx.gasLimit, floor, Interpreter.run(init))
     }
   }
