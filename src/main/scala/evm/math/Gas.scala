@@ -90,5 +90,5 @@ object Gas {
         } else BigInt(0)
       cross + reset
     }
-  }
+  }.ensuring(r => r >= -SSTORE_CLEARS)
 }
