@@ -154,6 +154,39 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.world.storageOf(callee).load(Word256.Zero).value, BigInt(0))
   }
 
+  test("CALL transfers value and runs the callee in its own storage") {
+    // callee stores its received CALLVALUE into slot 0
+    val calleeCode = code(0x34, 0x60, 0x00, 0x55, 0x00)
+    // caller CALLs callee with value 5 (gas 50000, no args/ret), then STOPs
+    val callerCode = code(
+      0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x05, 0x61, 0x20, 0x00, 0x61, 0xC3, 0x50,
+      0xF1, 0x00)
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256(BigInt(100)), callerCode),
+      callee -> Account(Word256.Zero, calleeCode)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.world.balanceOf(callee).value, BigInt(5))
+    assertEquals(res.world.balanceOf(to).value, BigInt(95))
+    assertEquals(res.world.storageOf(callee).load(Word256.Zero).value, BigInt(5))
+    assertEquals(res.world.storageOf(to).load(Word256.Zero).value, BigInt(0))
+  }
+
+  test("CALL with insufficient balance fails and moves no value") {
+    val calleeCode = code(0x34, 0x60, 0x00, 0x55, 0x00)
+    // caller CALLs with value 200 (> its 100 balance), then STOPs
+    val callerCode = code(
+      0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0xC8, 0x61, 0x20, 0x00, 0x61, 0xC3, 0x50,
+      0xF1, 0x00)
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256(BigInt(100)), callerCode),
+      callee -> Account(Word256.Zero, calleeCode)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.world.balanceOf(to).value, BigInt(100))
+    assertEquals(res.world.balanceOf(callee).value, BigInt(0))
+  }
+
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
