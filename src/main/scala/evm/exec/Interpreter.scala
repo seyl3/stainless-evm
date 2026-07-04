@@ -474,6 +474,22 @@ object Interpreter:
           && r.logs == st.logs :+ Log(st.msg.self, st.stack.data.tail.tail.take(n),
                Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value)))))
 
+  // EXP: base ** exponent, charging 50 gas per byte of the exponent on top of the
+  // static base; the result comes from the verified binop.
+  def expOp(st: ExecState): ExecState = {
+    if (st.stack.data.size < 2) st.fail
+    else {
+      val extra = 50 * EvmMath.byteLength(st.stack.data.tail.head.value)
+      if (st.outOfGas(extra)) st.fail
+      else binop(st.chargeGas(extra), (a, b) => a ** b)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 2 && r.pc == st.pc + 1
+          && r.stack.data.head == (st.stack.data.head ** st.stack.data.tail.head)
+          && r.stack.data.tail == st.stack.data.tail.tail)))
+
   // SELFDESTRUCT: transfer the whole balance of the executing account to the
   // beneficiary and halt. Post-EIP-6780 it does not delete code/storage unless the
   // account was created in the same transaction (unreachable until CREATE exists).
@@ -511,13 +527,7 @@ object Interpreter:
       case Opcode.SDIV => binop(s1, (a, b) => a.sdiv(b))
       case Opcode.MOD => binop(s1, (a, b) => a % b)
       case Opcode.SMOD => binop(s1, (a, b) => a.smod(b))
-      case Opcode.EXP =>
-        if (s1.stack.data.size < 2) s1.fail
-        else {
-          val extra = 50 * EvmMath.byteLength(s1.stack.data.tail.head.value)
-          if (s1.outOfGas(extra)) s1.fail
-          else binop(s1.chargeGas(extra), (a, b) => a ** b)
-        }
+      case Opcode.EXP => expOp(s1)
       case Opcode.SIGNEXTEND => binop(s1, (a, b) => b.signextend(a))
 
       case Opcode.LT => binop(s1, (a, b) => if (a.lt(b)) Word256.One else Word256.Zero)
