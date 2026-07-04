@@ -123,6 +123,21 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.returnData.head, BigInt(0))
   }
 
+  test("STATICCALL exposes the child's return data to the caller (RETURNDATACOPY)") {
+    // callee returns the byte 0x42
+    val calleeCode = code(0x60, 0x42, 0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xF3)
+    // caller STATICCALLs, then RETURNDATACOPY(dest=0, off=0, len=1) and RETURN [0,1]
+    val callerCode = code(
+      0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x61, 0x20, 0x00, 0x61, 0xC3, 0x50, 0xFA,
+      0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0x3E, 0x60, 0x01, 0x60, 0x00, 0xF3)
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256.Zero, callerCode),
+      callee -> Account(Word256.Zero, calleeCode)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData.head, BigInt(0x42))
+  }
+
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
