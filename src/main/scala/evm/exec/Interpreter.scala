@@ -642,6 +642,22 @@ object Interpreter:
         if (s1.returnData.size > MAX_VALUE) s1.fail
         else pushConst(s1, Word256(s1.returnData.size))
 
+      case Opcode.SELFDESTRUCT =>
+        if (s1.static || s1.stack.data.isEmpty) s1.fail
+        else {
+          val (b, _) = s1.stack.pop()
+          val beneficiary = Address.fromWord(b)
+          val bal = s1.world.balanceOf(s1.msg.self)
+          val extra = (if (s1.accessedAccounts.contains(beneficiary)) BigInt(0) else BigInt(2600)) +
+            (if (bal.value > 0 && !s1.world.accounts.contains(beneficiary)) BigInt(25000) else BigInt(0))
+          if (s1.outOfGas(extra)) s1.fail
+          else s1.copy(
+            gas = s1.gas - extra,
+            world = s1.world.transfer(s1.msg.self, beneficiary, bal),
+            accessedAccounts = s1.accessedAccounts ++ Set(beneficiary),
+            status = Status.Halted)
+        }
+
       case Opcode.LOG0 => logN(s1, 0)
       case Opcode.LOG1 => logN(s1, 1)
       case Opcode.LOG2 => logN(s1, 2)
@@ -781,6 +797,46 @@ object Interpreter:
     case CallReject(sr) => !sr.isRunning || sr.gas < s.gas
     case ce: CallEnter => ce.forwarded >= 0 && ce.parentForwarded.gas >= 0 && ce.child.gas < s.gas && ce.parentForwarded.gas + ce.forwarded < s.gas)
 
+  // CALLCODE: like CALL (has value, 7 args) but runs the target's code in the
+  // caller's own account (storage/self preserved, so state commits like
+  // DELEGATECALL); the value is sent to self, so no net balance change.
+  def prepareCallcode(s: ExecState): CallPrep = {
+    require(s.isRunning)
+    if (s.stack.data.size < 7) CallReject(s.fail)
+    else {
+      val (gasReq, a1) = s.stack.pop()
+      val (addr, a2) = a1.pop()
+      val (value, a3) = a2.pop()
+      val (argsOff, a4) = a3.pop()
+      val (argsLen, a5) = a4.pop()
+      val (retOff, a6) = a5.pop()
+      val (retLen, rest) = a6.pop()
+      val target = Address.fromWord(addr)
+      val hasValue = value.value > 0
+      val cost = BigInt(100) + (if (s.accessedAccounts.contains(target)) BigInt(0) else BigInt(2500)) +
+        (if (hasValue) BigInt(9000) else BigInt(0))
+      if ((s.static && hasValue) || s.outOfGas(cost)) CallReject(s.fail)
+      else {
+        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(target))
+        if (s1.depth >= ExecState.MAX_DEPTH || s.world.balanceOf(s.msg.self).value < value.value) {
+          if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CallReject(s1.fail)
+          else CallReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
+        } else {
+          val avail = s1.gas - s1.gas / 64
+          val baseFwd = if (gasReq.value < avail) gasReq.value else avail
+          val g = baseFwd + (if (hasValue) BigInt(2300) else BigInt(0))
+          val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
+          val child = ExecState.subFrame(s1.world.codeOf(target), s1.msg.self, s1.msg.self, value,
+            callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, s1.world, s1.storage, s1.original,
+            s1.accessedAccounts)
+          CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, true, s1.msg.self, s.world)
+        }
+      }
+    }
+  }.ensuring(r => r match
+    case CallReject(sr) => !sr.isRunning || sr.gas < s.gas
+    case ce: CallEnter => ce.forwarded >= 0 && ce.parentForwarded.gas >= 0 && ce.child.gas < s.gas && ce.parentForwarded.gas + ce.forwarded < s.gas)
+
   // Merge a finished child frame into the parent: push success (1/0), refund the
   // child's unused gas (capped at what was forwarded), expose its return data, and
   // (if commitState and success) commit its world/storage/slots/logs/refund; a
@@ -820,6 +876,12 @@ object Interpreter:
           if (!parent2.isRunning) parent2 else run(parent2)
     } else if (s.pc < s.code.size && s.code.opcodeAt(s.pc) == Some(Opcode.CALL)) {
       prepareCall(s) match
+        case CallReject(sr) => if (!sr.isRunning) sr else run(sr)
+        case ce: CallEnter =>
+          val parent2 = mergeCall(ce, run(ce.child))
+          if (!parent2.isRunning) parent2 else run(parent2)
+    } else if (s.pc < s.code.size && s.code.opcodeAt(s.pc) == Some(Opcode.CALLCODE)) {
+      prepareCallcode(s) match
         case CallReject(sr) => if (!sr.isRunning) sr else run(sr)
         case ce: CallEnter =>
           val parent2 = mergeCall(ce, run(ce.child))
