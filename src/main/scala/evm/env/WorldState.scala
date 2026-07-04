@@ -31,3 +31,14 @@ case class WorldState(accounts: Map[Address, Account]):
     val acc = if (accounts.contains(a)) accounts(a) else Account(Word256.Zero, Code.empty, Storage.empty)
     WorldState(accounts.updated(a, acc.copy(storage = s)))
   }.ensuring(r => r.storageOf(a) == s)
+
+  def withBalance(a: Address, bal: Word256): WorldState = {
+    val acc = if (accounts.contains(a)) accounts(a) else Account(Word256.Zero, Code.empty, Storage.empty)
+    WorldState(accounts.updated(a, acc.copy(balance = bal)))
+  }.ensuring(r => r.balanceOf(a) == bal)
+
+  // Move value from one account to another (caller must ensure the sender has it).
+  def transfer(from: Address, to: Address, value: Word256): WorldState = {
+    val w1 = withBalance(from, balanceOf(from) - value)
+    w1.withBalance(to, w1.balanceOf(to) + value)
+  }

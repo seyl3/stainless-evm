@@ -65,7 +65,7 @@ object Transaction:
     val gasUsed = if (afterRefund < floor) floor else afterRefund
     // On success the recipient's modified storage is committed to the world; a
     // reverted or failed tx leaves the world unchanged (state rolled back).
-    if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, world.withStorage(to, fin.storage))
+    if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, fin.world.withStorage(to, fin.storage))
     else if (fin.status == Status.Reverted) TxResult(Status.Reverted, gasUsed, BigInt(0), Nil(), fin.returnData, world)
     else TxResult(fin.status, gasUsed, BigInt(0), Nil(), Nil(), world)
   }.ensuring(r => r.gasUsed >= 0 && r.gasRefunded >= 0)
