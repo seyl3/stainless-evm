@@ -474,6 +474,30 @@ object Interpreter:
           && r.logs == st.logs :+ Log(st.msg.self, st.stack.data.tail.tail.take(n),
                Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value)))))
 
+  // SELFDESTRUCT: transfer the whole balance of the executing account to the
+  // beneficiary and halt. Post-EIP-6780 it does not delete code/storage unless the
+  // account was created in the same transaction (unreachable until CREATE exists).
+  def selfdestructOp(st: ExecState): ExecState = {
+    if (st.static || st.stack.data.isEmpty) st.fail
+    else {
+      val beneficiary = Address.fromWord(st.stack.data.head)
+      val bal = st.world.balanceOf(st.msg.self)
+      val extra = (if (st.accessedAccounts.contains(beneficiary)) BigInt(0) else BigInt(2600)) +
+        (if (bal.value > 0 && !st.world.accounts.contains(beneficiary)) BigInt(25000) else BigInt(0))
+      if (st.outOfGas(extra)) st.fail
+      else st.copy(
+        gas = st.gas - extra,
+        world = st.world.transfer(st.msg.self, beneficiary, bal),
+        accessedAccounts = st.accessedAccounts ++ Set(beneficiary),
+        status = Status.Halted)
+    }
+  }.ensuring(r =>
+    !r.isRunning && r.gas <= st.gas
+    && (r.status == Status.Halted ==>
+         (st.stack.data.nonEmpty
+          && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head))
+          && r.world == st.world.transfer(st.msg.self, Address.fromWord(st.stack.data.head), st.world.balanceOf(st.msg.self)))))
+
   def execute(s1: ExecState, op: Opcode): ExecState = {
     op match
       case Opcode.STOP => s1.halt
@@ -642,21 +666,7 @@ object Interpreter:
         if (s1.returnData.size > MAX_VALUE) s1.fail
         else pushConst(s1, Word256(s1.returnData.size))
 
-      case Opcode.SELFDESTRUCT =>
-        if (s1.static || s1.stack.data.isEmpty) s1.fail
-        else {
-          val (b, _) = s1.stack.pop()
-          val beneficiary = Address.fromWord(b)
-          val bal = s1.world.balanceOf(s1.msg.self)
-          val extra = (if (s1.accessedAccounts.contains(beneficiary)) BigInt(0) else BigInt(2600)) +
-            (if (bal.value > 0 && !s1.world.accounts.contains(beneficiary)) BigInt(25000) else BigInt(0))
-          if (s1.outOfGas(extra)) s1.fail
-          else s1.copy(
-            gas = s1.gas - extra,
-            world = s1.world.transfer(s1.msg.self, beneficiary, bal),
-            accessedAccounts = s1.accessedAccounts ++ Set(beneficiary),
-            status = Status.Halted)
-        }
+      case Opcode.SELFDESTRUCT => selfdestructOp(s1)
 
       case Opcode.LOG0 => logN(s1, 0)
       case Opcode.LOG1 => logN(s1, 1)
