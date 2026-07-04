@@ -671,21 +671,24 @@ object Interpreter:
       val (argsLen, a4) = a3.pop()
       val (retOff, a5) = a4.pop()
       val (retLen, rest) = a5.pop()
-      if (s.outOfGas(100)) CallReject(s.fail)
+      val callee = Address.fromWord(addr)
+      val cost = BigInt(100) + (if (s.accessedAccounts.contains(callee)) BigInt(0) else BigInt(2500))
+      if (s.outOfGas(cost)) CallReject(s.fail)
       else {
-        val s1 = s.chargeGas(100)
+        // single copy to keep the VC term small (the fallback solver hangs on
+        // chargeGas(...).copy(...) here)
+        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(callee))
         if (s1.depth >= ExecState.MAX_DEPTH) {
           if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CallReject(s1.fail)
           else CallReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
         } else {
           val avail = s1.gas - s1.gas / 64
           val g = if (gasReq.value < avail) gasReq.value else avail
-          val callee = Address.fromWord(addr)
-          val callData = Bytes.readList(s1.memory.data, argsOff.value, argsLen.value)
+          val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
           val child = ExecState.subFrame(s1.world.codeOf(callee), callee, s1.msg.self, Word256.Zero,
             callData, g, s1.depth + 1, true, s1.block, s1.tx, s1.world, s1.world.storageOf(callee),
-            s1.accessedAccounts ++ Set(callee))
-          CallEnter(child, s1.chargeGas(g), rest, g)
+            s1.accessedAccounts)
+          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g)
         }
       }
     }
@@ -702,7 +705,8 @@ object Interpreter:
     if (enter.rest.data.size >= Stack.MAXIMUM_STACK_SIZE) enter.parentForwarded.fail
     else enter.parentForwarded.copy(
       gas = enter.parentForwarded.gas + refund,
-      stack = enter.rest.push(if (success) Word256.One else Word256.Zero)).advancePc(1)
+      stack = enter.rest.push(if (success) Word256.One else Word256.Zero),
+      returnData = childRes.returnData).advancePc(1)
   }.ensuring(r => r.gas <= enter.parentForwarded.gas + enter.forwarded)
 
   def run(s: ExecState): ExecState = {
