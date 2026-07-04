@@ -18,7 +18,11 @@ import evm.env.Log
 // gas-forwarded parent to merge the result into.
 sealed abstract class CallPrep
 case class CallReject(state: ExecState) extends CallPrep
-case class CallEnter(child: ExecState, parentForwarded: ExecState, rest: Stack, forwarded: BigInt) extends CallPrep
+// commitState: whether a successful child's state changes (storage/logs/refund)
+// are committed back to the parent. STATICCALL is read-only (false); DELEGATECALL
+// runs in the caller's own account, so it commits (true).
+case class CallEnter(child: ExecState, parentForwarded: ExecState, rest: Stack,
+                     forwarded: BigInt, commitState: Boolean) extends CallPrep
 
 object Interpreter:
 
@@ -685,28 +689,71 @@ object Interpreter:
           val avail = s1.gas - s1.gas / 64
           val g = if (gasReq.value < avail) gasReq.value else avail
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
+          val calleeStorage = s1.world.storageOf(callee)
           val child = ExecState.subFrame(s1.world.codeOf(callee), callee, s1.msg.self, Word256.Zero,
-            callData, g, s1.depth + 1, true, s1.block, s1.tx, s1.world, s1.world.storageOf(callee),
+            callData, g, s1.depth + 1, true, s1.block, s1.tx, s1.world, calleeStorage, calleeStorage,
             s1.accessedAccounts)
-          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g)
+          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, false)
         }
       }
     }
   }.ensuring(r => r match
     case CallReject(sr) => !sr.isRunning || sr.gas < s.gas
-    case CallEnter(child, pf, rest, g) => g >= 0 && pf.gas >= 0 && child.gas < s.gas && pf.gas + g < s.gas)
+    case CallEnter(child, pf, rest, g, c) => g >= 0 && pf.gas >= 0 && child.gas < s.gas && pf.gas + g < s.gas)
+
+  // DELEGATECALL: run the target's code but in the caller's own context (self,
+  // sender, value, and storage are all the parent's), so state changes commit.
+  def prepareDelegateCall(s: ExecState): CallPrep = {
+    require(s.isRunning)
+    if (s.stack.data.size < 6) CallReject(s.fail)
+    else {
+      val (gasReq, a1) = s.stack.pop()
+      val (addr, a2) = a1.pop()
+      val (argsOff, a3) = a2.pop()
+      val (argsLen, a4) = a3.pop()
+      val (retOff, a5) = a4.pop()
+      val (retLen, rest) = a5.pop()
+      val target = Address.fromWord(addr)
+      val cost = BigInt(100) + (if (s.accessedAccounts.contains(target)) BigInt(0) else BigInt(2500))
+      if (s.outOfGas(cost)) CallReject(s.fail)
+      else {
+        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(target))
+        if (s1.depth >= ExecState.MAX_DEPTH) {
+          if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CallReject(s1.fail)
+          else CallReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
+        } else {
+          val avail = s1.gas - s1.gas / 64
+          val g = if (gasReq.value < avail) gasReq.value else avail
+          val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
+          val child = ExecState.subFrame(s1.world.codeOf(target), s1.msg.self, s1.msg.caller,
+            s1.msg.callValue, callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, s1.world,
+            s1.storage, s1.original, s1.accessedAccounts)
+          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, true)
+        }
+      }
+    }
+  }.ensuring(r => r match
+    case CallReject(sr) => !sr.isRunning || sr.gas < s.gas
+    case CallEnter(child, pf, rest, g, c) => g >= 0 && pf.gas >= 0 && child.gas < s.gas && pf.gas + g < s.gas)
 
   // Merge a finished child frame into the parent: push success (1/0), refund the
-  // child's unused gas (capped at what was forwarded), and advance past the call.
-  def mergeStaticCall(enter: CallEnter, childRes: ExecState): ExecState = {
+  // child's unused gas (capped at what was forwarded), expose its return data, and
+  // (if commitState and success) commit its storage/slots/logs/refund.
+  def mergeCall(enter: CallEnter, childRes: ExecState): ExecState = {
     require(enter.parentForwarded.gas >= 0 && enter.forwarded >= 0)
     val success = childRes.status == Status.Halted
+    val commit = success && enter.commitState
     val refund = if (childRes.gas < enter.forwarded) childRes.gas else enter.forwarded
     if (enter.rest.data.size >= Stack.MAXIMUM_STACK_SIZE) enter.parentForwarded.fail
     else enter.parentForwarded.copy(
       gas = enter.parentForwarded.gas + refund,
       stack = enter.rest.push(if (success) Word256.One else Word256.Zero),
-      returnData = childRes.returnData).advancePc(1)
+      returnData = childRes.returnData,
+      storage = if (commit) childRes.storage else enter.parentForwarded.storage,
+      accessedSlots = if (commit) childRes.accessedSlots else enter.parentForwarded.accessedSlots,
+      logs = if (commit) childRes.logs else enter.parentForwarded.logs,
+      refund = if (commit) enter.parentForwarded.refund + childRes.refund else enter.parentForwarded.refund
+    ).advancePc(1)
   }.ensuring(r => r.gas <= enter.parentForwarded.gas + enter.forwarded)
 
   def run(s: ExecState): ExecState = {
@@ -716,7 +763,13 @@ object Interpreter:
       prepareStaticCall(s) match
         case CallReject(sr) => if (!sr.isRunning) sr else run(sr)
         case ce: CallEnter =>
-          val parent2 = mergeStaticCall(ce, run(ce.child))
+          val parent2 = mergeCall(ce, run(ce.child))
+          if (!parent2.isRunning) parent2 else run(parent2)
+    } else if (s.pc < s.code.size && s.code.opcodeAt(s.pc) == Some(Opcode.DELEGATECALL)) {
+      prepareDelegateCall(s) match
+        case CallReject(sr) => if (!sr.isRunning) sr else run(sr)
+        case ce: CallEnter =>
+          val parent2 = mergeCall(ce, run(ce.child))
           if (!parent2.isRunning) parent2 else run(parent2)
     } else {
       val s1 = step(s)
