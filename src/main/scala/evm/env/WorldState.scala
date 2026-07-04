@@ -37,8 +37,9 @@ case class WorldState(accounts: Map[Address, Account]):
     WorldState(accounts.updated(a, acc.copy(balance = bal)))
   }.ensuring(r => r.balanceOf(a) == bal)
 
-  // Move value from one account to another (caller must ensure the sender has it).
+  // Move value from one account to another. The sender must have the balance.
   def transfer(from: Address, to: Address, value: Word256): WorldState = {
+    require(balanceOf(from).value >= value.value)
     val w1 = withBalance(from, balanceOf(from) - value)
     w1.withBalance(to, w1.balanceOf(to) + value)
   }
