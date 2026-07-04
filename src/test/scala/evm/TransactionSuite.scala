@@ -138,6 +138,22 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.returnData.head, BigInt(0x42))
   }
 
+  test("DELEGATECALL runs the target's code against the caller's own storage") {
+    // target SSTOREs slot 0 = 0x42
+    val targetCode = code(0x60, 0x42, 0x60, 0x00, 0x55, 0x00)
+    // caller DELEGATECALLs the target then STOPs
+    val callerCode = code(
+      0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x61, 0x20, 0x00, 0x61, 0xC3, 0x50, 0xF4, 0x00)
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256.Zero, callerCode),
+      callee -> Account(Word256.Zero, targetCode)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    // the write landed in the CALLER's storage, not the target's
+    assertEquals(res.world.storageOf(to).load(Word256.Zero).value, BigInt(0x42))
+    assertEquals(res.world.storageOf(callee).load(Word256.Zero).value, BigInt(0))
+  }
+
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
