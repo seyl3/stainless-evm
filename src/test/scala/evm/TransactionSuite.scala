@@ -187,6 +187,34 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.world.balanceOf(callee).value, BigInt(0))
   }
 
+  test("SELFDESTRUCT sends the contract's whole balance to the beneficiary") {
+    val beneficiary = Address(BigInt(0x3000))
+    // contract PUSHes the beneficiary and SELFDESTRUCTs
+    val program = code(0x61, 0x30, 0x00, 0xFF)
+    val world = WorldState(stainless.lang.Map(to -> Account(Word256(BigInt(50)), program)))
+    val res = Transaction.run(tx(100000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.world.balanceOf(beneficiary).value, BigInt(50))
+    assertEquals(res.world.balanceOf(to).value, BigInt(0))
+  }
+
+  test("CALLCODE runs the target's code against the caller's storage") {
+    // target SSTOREs its CALLVALUE into slot 0
+    val targetCode = code(0x34, 0x60, 0x00, 0x55, 0x00)
+    // caller CALLCODEs the target with value 7 then STOPs
+    val callerCode = code(
+      0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x07, 0x61, 0x20, 0x00, 0x61, 0xC3, 0x50,
+      0xF2, 0x00)
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256(BigInt(100)), callerCode),
+      callee -> Account(Word256.Zero, targetCode)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    // the SSTORE landed in the caller's storage (value 7), target's stays 0
+    assertEquals(res.world.storageOf(to).load(Word256.Zero).value, BigInt(7))
+    assertEquals(res.world.storageOf(callee).load(Word256.Zero).value, BigInt(0))
+  }
+
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
