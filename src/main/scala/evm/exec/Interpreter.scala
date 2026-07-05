@@ -495,6 +495,53 @@ object Interpreter:
           && r.stack.data.head == Keccak256.hash(Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value))
           && r.stack.data.tail == st.stack.data.tail.tail)))
 
+  def extcodehashOp(st: ExecState): ExecState = {
+    if (st.stack.data.isEmpty) st.fail
+    else {
+      val (a, t) = st.stack.pop()
+      val addr = Address.fromWord(a)
+      val extra = if (st.accessedAccounts.contains(addr)) BigInt(0) else BigInt(2500)
+      if (st.outOfGas(extra)) st.fail
+      else {
+        val h = if (st.world.accounts.contains(addr)) Keccak256.hash(st.world.codeOf(addr).code) else Word256.Zero
+        st.chargeGas(extra).copy(stack = t.push(h),
+          accessedAccounts = st.accessedAccounts ++ Set(addr)).advancePc(1)
+      }
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.nonEmpty && r.pc == st.pc + 1
+          && r.stack.data.head == (if (st.world.accounts.contains(Address.fromWord(st.stack.data.head)))
+               Keccak256.hash(st.world.codeOf(Address.fromWord(st.stack.data.head)).code) else Word256.Zero)
+          && r.stack.data.tail == st.stack.data.tail
+          && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head)))))
+
+  def extcodecopyOp(st: ExecState): ExecState = {
+    if (st.stack.data.size < 4) st.fail
+    else {
+      val (a, t1) = st.stack.pop()
+      val (d, t2) = t1.pop()
+      val (o, t3) = t2.pop()
+      val (l, t4) = t3.pop()
+      val addr = Address.fromWord(a)
+      val extra = (if (st.accessedAccounts.contains(addr)) BigInt(0) else BigInt(2500)) +
+        (if (l.value == 0) BigInt(0) else 3 * Gas.words(l.value) + memExpandCost(st, d.value + l.value))
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(stack = t4,
+        memory = st.memory.copyIn(d.value, st.world.codeOf(addr).code, o.value, l.value),
+        accessedAccounts = st.accessedAccounts ++ Set(addr)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 4 && r.pc == st.pc + 1
+          && r.stack.data == st.stack.data.tail.tail.tail.tail
+          && r.memory == st.memory.copyIn(st.stack.data.tail.head.value,
+               st.world.codeOf(Address.fromWord(st.stack.data.head)).code,
+               st.stack.data.tail.tail.head.value, st.stack.data.tail.tail.tail.head.value)
+          && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head)))))
+
   // EXP: base ** exponent, charging 50 gas per byte of the exponent on top of the
   // static base; the result comes from the verified binop.
   def expOp(st: ExecState): ExecState = {
@@ -680,6 +727,8 @@ object Interpreter:
       case Opcode.BLOBHASH => unop(s1, idx => s1.tx.blobHash(idx))
       case Opcode.BALANCE => balanceOp(s1)
       case Opcode.EXTCODESIZE => extcodesizeOp(s1)
+      case Opcode.EXTCODEHASH => extcodehashOp(s1)
+      case Opcode.EXTCODECOPY => extcodecopyOp(s1)
       case Opcode.TLOAD => tload(s1)
       case Opcode.TSTORE => tstore(s1)
       case Opcode.SLOAD => sload(s1)
