@@ -215,6 +215,16 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.world.storageOf(callee).load(Word256.Zero).value, BigInt(0))
   }
 
+  test("KECCAK256 of an empty region returns the empty keccak hash") {
+    // KECCAK256(len=0, off=0), MSTORE it at 0, RETURN [0,32]
+    val program = code(0x60, 0x00, 0x60, 0x00, 0x20, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3)
+    val res = Transaction.run(tx(100000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData.size, BigInt(32))
+    val v = res.returnData.foldLeft(BigInt(0))((acc, b) => (acc << 8) | b)
+    assertEquals(v, BigInt("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470", 16))
+  }
+
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
