@@ -56,6 +56,7 @@ src/main/scala/evm/
     Gas.scala                  Pure gas pricing formulas (memory expansion, copy, keccak, exp, log, access, sstore) with non-negativity lemmas
   value/   primitive value types
     Word256.scala              The 256-bit EVM word with verified arithmetic, bitwise, shift, signed, and comparison operations
+    Keccak256.scala            Keccak-256 as a trusted @extern primitive (a real executable implementation, treated as a black box by the verifier)
   state/   the mutable machine state
     Stack.scala                The 1024-item EVM stack (push, pop, peek, dup, swap), verified to respect the depth bound
     Memory.scala               Byte-addressable EVM memory (load, store, store8, mcopy, msize, expand), with proven write/read round-trips
@@ -71,7 +72,7 @@ src/main/scala/evm/
   exec/    the machine
     ExecState.scala            Execution state: stack, memory, storage, transient, pc, gas, depth, static flag, status, return data, block/tx/message/world context, accessed sets, logs and the refund counter
     Transaction.scala          The transaction layer: intrinsic gas, top-level entry (run), recipient storage load/commit, and gas settlement with the EIP-3529 capped refund
-    Interpreter.scala          The step/run dispatch loop (with recursive call frames CALL/CALLCODE/DELEGATECALL/STATICCALL, value transfer, and SELFDESTRUCT, proven-terminating): arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas, the read-only environment ops (ADDRESS, CALLER, CALLVALUE, ORIGIN, block/tx fields, SELFBALANCE, CODESIZE, PC, GAS), world reads with account cold/warm (BALANCE, EXTCODESIZE), BLOCKHASH/BLOBHASH, storage (SLOAD/SSTORE with cold/warm and the EIP-2200 charge, TLOAD/TSTORE), control flow (JUMP/JUMPI against verified JUMPDEST analysis, RETURN, REVERT), the calldata/code copy ops (CALLDATALOAD, CALLDATACOPY, CODECOPY, RETURNDATASIZE, RETURNDATACOPY), and LOG0-4 (emitting to a log accumulator); proven-terminating run
+    Interpreter.scala          The step/run dispatch loop (with recursive call frames CALL/CALLCODE/DELEGATECALL/STATICCALL, value transfer, and SELFDESTRUCT, proven-terminating): arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas, the read-only environment ops (ADDRESS, CALLER, CALLVALUE, ORIGIN, block/tx fields, SELFBALANCE, CODESIZE, PC, GAS), world reads with account cold/warm (BALANCE, EXTCODESIZE), BLOCKHASH/BLOBHASH, storage (SLOAD/SSTORE with cold/warm and the EIP-2200 charge, TLOAD/TSTORE), control flow (JUMP/JUMPI against verified JUMPDEST analysis, RETURN, REVERT), the calldata/code copy ops (CALLDATALOAD, CALLDATACOPY, CODECOPY, RETURNDATASIZE, RETURNDATACOPY), KECCAK256 (via the trusted keccak primitive, with per-word gas), and LOG0-4 (emitting to a log accumulator); proven-terminating run
 src/test/scala/evm/            munit unit tests, one suite per type (Word256, Stack, Memory, Storage, Gas, Opcode, Code, ExecState, Interpreter, Context)
 build.sbt                      Single Stainless project (Stainless runs on every compile)
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
