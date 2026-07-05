@@ -3,6 +3,7 @@ package evm.exec
 import stainless.lang.*
 import stainless.collection.*
 import evm.value.Word256
+import evm.value.Keccak256
 import evm.math.Gas
 import evm.math.EvmMath
 import evm.math.EvmMath.MAX_VALUE
@@ -474,6 +475,26 @@ object Interpreter:
           && r.logs == st.logs :+ Log(st.msg.self, st.stack.data.tail.tail.take(n),
                Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value)))))
 
+  // KECCAK256: hash memory[offset:offset+len] and push the digest. Gas 30 (base) +
+  // 6 per word + memory expansion. Keccak256.hash is a trusted primitive.
+  def keccak256Op(st: ExecState): ExecState = {
+    if (st.stack.data.size < 2) st.fail
+    else {
+      val (o, t1) = st.stack.pop()
+      val (l, t2) = t1.pop()
+      val extra = 6 * Gas.words(l.value) + (if (l.value == 0) BigInt(0) else memExpandCost(st, o.value + l.value))
+      if (st.outOfGas(extra)) st.fail
+      else st.chargeGas(extra).copy(
+        stack = t2.push(Keccak256.hash(Bytes.readList(st.memory.data, o.value, l.value))),
+        memory = if (l.value == 0) st.memory else st.memory.expand(o.value + l.value)).advancePc(1)
+    }
+  }.ensuring(r =>
+    (!r.isRunning || r.gas <= st.gas)
+    && (r.isRunning ==>
+         (st.stack.data.size >= 2 && r.pc == st.pc + 1
+          && r.stack.data.head == Keccak256.hash(Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value))
+          && r.stack.data.tail == st.stack.data.tail.tail)))
+
   // EXP: base ** exponent, charging 50 gas per byte of the exponent on top of the
   // static base; the result comes from the verified binop.
   def expOp(st: ExecState): ExecState = {
@@ -527,6 +548,7 @@ object Interpreter:
       case Opcode.SDIV => binop(s1, (a, b) => a.sdiv(b))
       case Opcode.MOD => binop(s1, (a, b) => a % b)
       case Opcode.SMOD => binop(s1, (a, b) => a.smod(b))
+      case Opcode.KECCAK256 => keccak256Op(s1)
       case Opcode.EXP => expOp(s1)
       case Opcode.SIGNEXTEND => binop(s1, (a, b) => b.signextend(a))
 
