@@ -225,6 +225,37 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(v, BigInt("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470", 16))
   }
 
+  test("EXTCODEHASH of an existing account is the keccak of its code") {
+    val program = code(0x61, 0x20, 0x00, 0x3F, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3)
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256.Zero, program),
+      callee -> Account(Word256.Zero, code(0x00))))
+    val res = Transaction.run(tx(100000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    val v = res.returnData.foldLeft(BigInt(0))((acc, b) => (acc << 8) | b)
+    assertEquals(v, BigInt("bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a", 16))
+  }
+
+  test("EXTCODEHASH of an absent account is zero") {
+    val program = code(0x61, 0x99, 0x99, 0x3F, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3)
+    val res = Transaction.run(tx(100000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    val v = res.returnData.foldLeft(BigInt(0))((acc, b) => (acc << 8) | b)
+    assertEquals(v, BigInt(0))
+  }
+
+  test("EXTCODECOPY copies external code into memory zero-padded") {
+    val program = code(
+      0x60, 0x04, 0x60, 0x00, 0x60, 0x00, 0x61, 0x20, 0x00, 0x3C,
+      0x60, 0x04, 0x60, 0x00, 0xF3)
+    val world = WorldState(stainless.lang.Map(
+      to -> Account(Word256.Zero, program),
+      callee -> Account(Word256.Zero, code(0x60, 0x2A, 0x00))))
+    val res = Transaction.run(tx(100000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData, Cons(BigInt(0x60), Cons(BigInt(0x2A), Cons(BigInt(0x00), Cons(BigInt(0x00), Nil())))))
+  }
+
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
