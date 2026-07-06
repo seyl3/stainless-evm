@@ -4,6 +4,7 @@ import stainless.collection.*
 import stainless.lang.*
 import evm.value.Word256
 import evm.math.Bytes
+import evm.math.EvmMath
 import evm.state.Storage
 import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState, Log}
 
@@ -12,10 +13,12 @@ case class Transaction(
   to: Address,
   value: Word256,
   gasLimit: BigInt,
-  gasPrice: Word256,
+  maxFeePerGas: Word256,
+  maxPriorityFeePerGas: Word256,
+  nonce: BigInt,
   data: List[BigInt]
 ):
-  require(gasLimit >= 0)
+  require(gasLimit >= 0 && nonce >= 0)
 
 case class TxResult(
   status: Status,
@@ -33,7 +36,6 @@ object Transaction:
     Address(BigInt(5)), Address(BigInt(6)), Address(BigInt(7)), Address(BigInt(8)),
     Address(BigInt(9)), Address(BigInt(10)), Address(BigInt(256)))
 
-  // EIP-7623 calldata tokens: 1 per zero byte, 4 per nonzero byte.
   def tokens(data: List[BigInt]): BigInt = {
     decreases(data)
     data match
@@ -41,19 +43,27 @@ object Transaction:
       case Cons(b, t) => (if (Bytes.emod256(b) == 0) BigInt(1) else BigInt(4)) + tokens(t)
   }.ensuring(r => r >= 0)
 
-  // Standard intrinsic cost: 21000 + 4 per token (= 4 per zero byte, 16 per nonzero).
   def intrinsicGas(data: List[BigInt]): BigInt = {
     BigInt(21000) + 4 * tokens(data)
   }.ensuring(r => r >= 21000)
 
-  // EIP-7623 floor: 21000 + 10 per token; a tx must pay at least this.
   def floorGas(data: List[BigInt]): BigInt = {
     BigInt(21000) + 10 * tokens(data)
   }.ensuring(r => r >= 21000)
 
-  def settle(gasLimit: BigInt, floor: BigInt, to: Address, world: WorldState, fin: ExecState): TxResult = {
-    require(gasLimit >= 0 && 0 <= floor && floor <= gasLimit)
-    val gasUsed0 = if (gasLimit >= fin.gas) gasLimit - fin.gas else BigInt(0)
+  def effectiveGasPrice(maxFee: Word256, maxPriority: Word256, baseFee: Word256): Word256 = {
+    require(baseFee.value <= maxFee.value)
+    val cap = maxFee.value - baseFee.value
+    val prio = if (maxPriority.value < cap) maxPriority.value else cap
+    Word256(baseFee.value + prio)
+  }.ensuring(r => baseFee.value <= r.value && r.value <= maxFee.value)
+
+  def settle(tx: Transaction, floor: BigInt, price: Word256, baseFee: Word256,
+             coinbase: Address, worldOnFail: WorldState, fin: ExecState): TxResult = {
+    require(0 <= floor && floor <= tx.gasLimit
+      && baseFee.value <= price.value
+      && tx.gasLimit * price.value <= EvmMath.MAX_VALUE)
+    val gasUsed0 = if (tx.gasLimit >= fin.gas) tx.gasLimit - fin.gas else BigInt(0)
     val success = fin.status == Status.Halted
     val refund =
       if (success) {
@@ -63,12 +73,50 @@ object Transaction:
       } else BigInt(0)
     val afterRefund = gasUsed0 - refund
     val gasUsed = if (afterRefund < floor) floor else afterRefund
-    // On success the recipient's modified storage is committed to the world; a
-    // reverted or failed tx leaves the world unchanged (state rolled back).
-    if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, fin.world.withStorage(to, fin.storage))
-    else if (fin.status == Status.Reverted) TxResult(Status.Reverted, gasUsed, BigInt(0), Nil(), fin.returnData, world)
-    else TxResult(fin.status, gasUsed, BigInt(0), Nil(), Nil(), world)
-  }.ensuring(r => r.gasUsed >= 0 && r.gasRefunded >= 0)
+    val unused = tx.gasLimit - gasUsed
+    val prio = price.value - baseFee.value
+    EvmMath.mulNonNeg(unused, price.value)
+    EvmMath.mulLeMonoLeft(unused, tx.gasLimit, price.value)
+    EvmMath.mulNonNeg(gasUsed, prio)
+    EvmMath.mulLeMono(gasUsed, prio, price.value)
+    EvmMath.mulLeMonoLeft(gasUsed, tx.gasLimit, price.value)
+    val weiRefund = Word256(unused * price.value)
+    val tip = Word256(gasUsed * prio)
+    val committed =
+      if (success) fin.world.withStorage(tx.to, fin.storage) else worldOnFail
+    val w1 = committed.withBalance(tx.origin, committed.balanceOf(tx.origin) + weiRefund)
+    val w2 = w1.withBalance(coinbase, w1.balanceOf(coinbase) + tip)
+    if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, w2)
+    else if (fin.status == Status.Reverted) TxResult(Status.Reverted, gasUsed, BigInt(0), Nil(), fin.returnData, w2)
+    else TxResult(fin.status, gasUsed, BigInt(0), Nil(), Nil(), w2)
+  }.ensuring(r => floor <= r.gasUsed && r.gasUsed <= tx.gasLimit && r.gasRefunded >= 0)
+
+  def execTx(tx: Transaction, block: BlockContext, world: WorldState,
+             intrinsic: BigInt, floor: BigInt): TxResult = {
+    require(0 <= intrinsic && intrinsic <= floor && floor <= tx.gasLimit
+      && block.baseFee.value <= tx.maxFeePerGas.value
+      && tx.maxPriorityFeePerGas.value <= tx.maxFeePerGas.value
+      && world.balanceOf(tx.origin).value >= tx.gasLimit * tx.maxFeePerGas.value + tx.value.value)
+    val senderBal = world.balanceOf(tx.origin)
+    val price = effectiveGasPrice(tx.maxFeePerGas, tx.maxPriorityFeePerGas, block.baseFee)
+    EvmMath.mulNonNeg(tx.gasLimit, price.value)
+    EvmMath.mulLeMono(tx.gasLimit, price.value, tx.maxFeePerGas.value)
+    val upfront = tx.gasLimit * price.value
+    senderBal.bounded
+    assert(upfront + tx.value.value <= senderBal.value)
+    EvmMath.sumBound(upfront, tx.value.value, senderBal.value)
+    val w1 = world.withNonce(tx.origin, tx.nonce + 1)
+      .withBalance(tx.origin, Word256(senderBal.value - upfront))
+    val w2 = w1.transfer(tx.origin, tx.to, tx.value)
+    val execGas = tx.gasLimit - intrinsic
+    val txctx = TxContext(tx.origin, price)
+    val msg = MessageContext(tx.to, tx.origin, tx.value, tx.data)
+    val s = w2.storageOf(tx.to)
+    val init = ExecState.initialWith(w2.codeOf(tx.to), execGas, block, txctx, msg, w2)
+      .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase),
+            storage = s, original = s)
+    settle(tx, floor, price, block.baseFee, block.coinbase, w1, Interpreter.run(init))
+  }.ensuring(r => 0 <= r.gasUsed && r.gasUsed <= tx.gasLimit && r.gasRefunded >= 0)
 
   def run(tx: Transaction, block: BlockContext, world: WorldState): TxResult = {
     val t = tokens(tx.data)
@@ -76,14 +124,11 @@ object Transaction:
     val floor = BigInt(21000) + 10 * t
     if (tx.gasLimit < floor)
       TxResult(Status.Failed, tx.gasLimit, BigInt(0), Nil(), Nil(), world)
-    else {
-      val execGas = tx.gasLimit - intrinsic
-      val txctx = TxContext(tx.origin, tx.gasPrice)
-      val msg = MessageContext(tx.to, tx.origin, tx.value, tx.data)
-      val s = world.storageOf(tx.to)
-      val init = ExecState.initialWith(world.codeOf(tx.to), execGas, block, txctx, msg, world)
-        .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase),
-              storage = s, original = s)
-      settle(tx.gasLimit, floor, tx.to, world, Interpreter.run(init))
-    }
-  }
+    else if (block.baseFee.value > tx.maxFeePerGas.value
+      || tx.maxPriorityFeePerGas.value > tx.maxFeePerGas.value
+      || tx.nonce != world.nonceOf(tx.origin)
+      || world.balanceOf(tx.origin).value < tx.gasLimit * tx.maxFeePerGas.value + tx.value.value)
+      TxResult(Status.Failed, BigInt(0), BigInt(0), Nil(), Nil(), world)
+    else
+      execTx(tx, block, world, intrinsic, floor)
+  }.ensuring(r => 0 <= r.gasUsed && r.gasUsed <= tx.gasLimit && r.gasRefunded >= 0)

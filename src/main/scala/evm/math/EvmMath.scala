@@ -167,6 +167,30 @@ object EvmMath {
   }.holds
 
   @ghost
+  def mulNonNeg(a: BigInt, b: BigInt): Boolean = {
+    require(a >= 0 && b >= 0)
+    a * b >= 0
+  }.holds
+
+  @ghost
+  def mulLeMono(a: BigInt, b: BigInt, c: BigInt): Boolean = {
+    require(a >= 0 && b <= c)
+    a * b <= a * c because (a * (c - b) >= 0)
+  }.holds
+
+  @ghost
+  def mulLeMonoLeft(a: BigInt, b: BigInt, c: BigInt): Boolean = {
+    require(a <= b && c >= 0)
+    a * c <= b * c because ((b - a) * c >= 0)
+  }.holds
+
+  @ghost
+  def sumBound(t: BigInt, v: BigInt, bal: BigInt): Boolean = {
+    require(v >= 0 && t + v <= bal && bal <= MAX_VALUE)
+    t <= MAX_VALUE
+  }.holds
+
+  @ghost
   def pow256Le(n: BigInt): Boolean = {
     require(0 <= n && n <= 32)
     pow(BigInt(256), n) <= MODULO because (powMono(BigInt(256), n, BigInt(32)) && pow256_32)

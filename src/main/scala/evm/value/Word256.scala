@@ -31,6 +31,11 @@ object Word256 {
 case class Word256(value: BigInt) {
   require(inBounds(value))
 
+  @ghost
+  def bounded: Boolean = {
+    value >= 0 && value <= MAX_VALUE
+  }.holds
+
   def +(other: Word256): Word256 = {
     Word256((value + other.value) % MODULO)
   }.ensuring(result =>

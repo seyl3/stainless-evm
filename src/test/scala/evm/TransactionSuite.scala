@@ -18,8 +18,10 @@ class TransactionSuite extends munit.FunSuite {
   def worldWith(c: Code): WorldState =
     WorldState(Map(to -> Account(Word256.Zero, c)))
 
-  def tx(gasLimit: BigInt, data: List[BigInt] = Nil()): Transaction =
-    Transaction(Address(BigInt(1)), to, Word256.Zero, gasLimit, Word256.Zero, data)
+  val sender: Address = Address(BigInt(1))
+
+  def tx(gasLimit: BigInt, data: List[BigInt] = Nil(), nonce: BigInt = 0): Transaction =
+    Transaction(sender, to, Word256.Zero, gasLimit, Word256.Zero, Word256.Zero, nonce, data)
 
   test("a simple transaction runs the recipient code and bills intrinsic plus execution gas") {
     val res = Transaction.run(tx(30000), BlockContext.empty, worldWith(code(0x60, 0x01, 0x00)))
@@ -85,7 +87,7 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(r1.status, Status.Halted)
     assertEquals(r1.world.storageOf(to).load(Word256.Zero).value, BigInt(1))
     // second tx runs against the world produced by the first
-    val r2 = Transaction.run(tx(100000), BlockContext.empty, r1.world)
+    val r2 = Transaction.run(tx(100000, nonce = 1), BlockContext.empty, r1.world)
     assertEquals(r2.world.storageOf(to).load(Word256.Zero).value, BigInt(2))
   }
 
@@ -256,11 +258,97 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.returnData, Cons(BigInt(0x60), Cons(BigInt(0x2A), Cons(BigInt(0x00), Cons(BigInt(0x00), Nil())))))
   }
 
+  test("a transaction transfers its value to the recipient and bumps the sender nonce") {
+    val world = WorldState(stainless.lang.Map(
+      sender -> Account(Word256(BigInt(100)), Code.empty),
+      to -> Account(Word256.Zero, code(0x00))))
+    val t = Transaction(sender, to, Word256(BigInt(10)), 30000, Word256.Zero, Word256.Zero, 0, Nil())
+    val res = Transaction.run(t, BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.world.balanceOf(sender).value, BigInt(90))
+    assertEquals(res.world.balanceOf(to).value, BigInt(10))
+    assertEquals(res.world.nonceOf(sender), BigInt(1))
+  }
+
+  test("a transaction whose sender cannot afford value plus fees is invalid") {
+    val world = WorldState(stainless.lang.Map(
+      sender -> Account(Word256(BigInt(100)), Code.empty),
+      to -> Account(Word256.Zero, code(0x00))))
+    val t = Transaction(sender, to, Word256(BigInt(200)), 30000, Word256.Zero, Word256.Zero, 0, Nil())
+    val res = Transaction.run(t, BlockContext.empty, world)
+    assertEquals(res.status, Status.Failed)
+    assertEquals(res.gasUsed, BigInt(0))
+    assertEquals(res.world.balanceOf(sender).value, BigInt(100))
+    assertEquals(res.world.nonceOf(sender), BigInt(0))
+  }
+
+  test("a transaction with the wrong nonce is invalid") {
+    val res = Transaction.run(tx(30000, nonce = 5), BlockContext.empty, worldWith(code(0x00)))
+    assertEquals(res.status, Status.Failed)
+    assertEquals(res.gasUsed, BigInt(0))
+  }
+
+  test("EIP-1559: the sender pays the effective price and the coinbase earns the tip") {
+    val coinbase = Address(BigInt(0xC0))
+    val block = BlockContext(coinbase, Word256.Zero, Word256.Zero, Word256.Zero,
+      Word256.Zero, Word256.Zero, Word256(BigInt(2)), Word256.Zero, stainless.lang.Map.empty[Word256, Word256])
+    val world = WorldState(stainless.lang.Map(
+      sender -> Account(Word256(BigInt(100000)), Code.empty),
+      to -> Account(Word256.Zero, code(0x00))))
+    val t = Transaction(sender, to, Word256.Zero, 30000,
+      Word256(BigInt(3)), Word256(BigInt(1)), 0, Nil())
+    val res = Transaction.run(t, block, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.gasUsed, BigInt(21000))
+    assertEquals(res.world.balanceOf(sender).value, BigInt(100000 - 21000 * 3))
+    assertEquals(res.world.balanceOf(coinbase).value, BigInt(21000))
+  }
+
+  test("a transaction whose max fee is below the base fee is invalid") {
+    val block = BlockContext(Address.zero, Word256.Zero, Word256.Zero, Word256.Zero,
+      Word256.Zero, Word256.Zero, Word256(BigInt(5)), Word256.Zero, stainless.lang.Map.empty[Word256, Word256])
+    val world = WorldState(stainless.lang.Map(
+      sender -> Account(Word256(BigInt(1000000)), Code.empty),
+      to -> Account(Word256.Zero, code(0x00))))
+    val t = Transaction(sender, to, Word256.Zero, 30000,
+      Word256(BigInt(3)), Word256.Zero, 0, Nil())
+    val res = Transaction.run(t, block, world)
+    assertEquals(res.status, Status.Failed)
+    assertEquals(res.gasUsed, BigInt(0))
+  }
+
+  test("a reverting transaction still pays fees and keeps the nonce bump but rolls back the value") {
+    val world = WorldState(stainless.lang.Map(
+      sender -> Account(Word256(BigInt(100)), Code.empty),
+      to -> Account(Word256.Zero, code(0x60, 0x00, 0x60, 0x00, 0xFD))))
+    val t = Transaction(sender, to, Word256(BigInt(10)), 30000, Word256.Zero, Word256.Zero, 0, Nil())
+    val res = Transaction.run(t, BlockContext.empty, world)
+    assertEquals(res.status, Status.Reverted)
+    assertEquals(res.world.balanceOf(sender).value, BigInt(100))
+    assertEquals(res.world.balanceOf(to).value, BigInt(0))
+    assertEquals(res.world.nonceOf(sender), BigInt(1))
+  }
+
+  test("GASPRICE pushes the effective gas price") {
+    val block = BlockContext(Address.zero, Word256.Zero, Word256.Zero, Word256.Zero,
+      Word256.Zero, Word256.Zero, Word256(BigInt(2)), Word256.Zero, stainless.lang.Map.empty[Word256, Word256])
+    val program = code(0x3A, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3)
+    val world = WorldState(stainless.lang.Map(
+      sender -> Account(Word256(BigInt(1000000)), Code.empty),
+      to -> Account(Word256.Zero, program)))
+    val t = Transaction(sender, to, Word256.Zero, 100000,
+      Word256(BigInt(3)), Word256(BigInt(1)), 0, Nil())
+    val res = Transaction.run(t, block, world)
+    assertEquals(res.status, Status.Halted)
+    val v = res.returnData.foldLeft(BigInt(0))((acc, b) => (acc << 8) | b)
+    assertEquals(v, BigInt(3))
+  }
+
   test("EIP-7623: a calldata-heavy low-execution tx is charged the token floor") {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
     val res = Transaction.run(
-      Transaction(Address(BigInt(1)), to, Word256.Zero, 30000, Word256.Zero, data),
+      Transaction(sender, to, Word256.Zero, 30000, Word256.Zero, Word256.Zero, 0, data),
       BlockContext.empty, worldWith(code(0x00)))
     assertEquals(res.status, Status.Halted)
     assertEquals(res.gasUsed, BigInt(21080))
