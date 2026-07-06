@@ -39,12 +39,40 @@ To skip verification temporarily:
 sbt "set every stainlessEnabled := false" compile
 ```
 
+## Running bytecode (CLI)
+
+The `cli` project is an unverified shell over the verified core (it depends on the
+core as compiled bytecode, so Stainless never sees it). It executes raw bytecode
+through the verified `Interpreter.run` and prints the outcome.
+
+```
+sbt "cli/run run <hex> [--gas N] [--calldata HEX] [--value N]"
+```
+
+For example, bytecode that stores 42 in memory and returns it:
+
+```
+sbt "cli/run run 602a60005260206000f3"
+```
+```
+status:    Halted
+gas used:  18
+return:    0x000000000000000000000000000000000000000000000000000000000000002a
+logs:      0
+```
+
+`--gas` sets the gas limit (default 1,000,000), `--calldata` supplies input bytes
+(hex), and `--value` sets the call value in wei. `sbt "cli/run help"` prints usage.
+Running the CLI recompiles the core dependency, so Stainless re-verifies it (cached).
+
 ## Project structure
 
-The whole tree is a single sbt project (one verification unit, one target). Since
-every verified type cross-references the others (Word256 uses EvmMath, the
+The verified core is a single sbt project (one verification unit, one target).
+Since every verified type cross-references the others (Word256 uses EvmMath, the
 interpreter uses everything), Stainless requires them in one compilation unit
-anyway, so the code is organized by package rather than by sbt module.
+anyway, so the code is organized by package rather than by sbt module. The only
+separate project is the `cli` shell, which is deliberately unverified and depends
+on the core as compiled bytecode.
 
 ```
 src/main/scala/evm/
@@ -74,7 +102,8 @@ src/main/scala/evm/
     Transaction.scala          The transaction layer: intrinsic gas + EIP-7623 calldata floor, EIP-1559 fees (effective gas price from base fee and priority tip, upfront debit, unused-gas refund to the sender, tip to the coinbase), nonce check and increment, top-level entry (run), recipient storage load/commit, and settlement with the EIP-3529 capped refund
     Interpreter.scala          The step/run dispatch loop (with recursive call frames CALL/CALLCODE/DELEGATECALL/STATICCALL, value transfer, and SELFDESTRUCT, proven-terminating): arithmetic, comparison, bitwise, shift, PUSH/DUP/SWAP/POP, memory (MLOAD/MSTORE/MSTORE8/MSIZE/MCOPY) with expansion and EXP dynamic gas, the read-only environment ops (ADDRESS, CALLER, CALLVALUE, ORIGIN, block/tx fields, SELFBALANCE, CODESIZE, PC, GAS), world reads with account cold/warm (BALANCE, EXTCODESIZE, EXTCODEHASH, EXTCODECOPY), BLOCKHASH/BLOBHASH, storage (SLOAD/SSTORE with cold/warm and the EIP-2200 charge, TLOAD/TSTORE), control flow (JUMP/JUMPI against verified JUMPDEST analysis, RETURN, REVERT), the calldata/code copy ops (CALLDATALOAD, CALLDATACOPY, CODECOPY, RETURNDATASIZE, RETURNDATACOPY), KECCAK256 (via the trusted keccak primitive, with per-word gas), and LOG0-4 (emitting to a log accumulator); proven-terminating run
 src/test/scala/evm/            munit unit tests, one suite per type (Word256, Stack, Memory, Storage, Gas, Opcode, Code, ExecState, Interpreter, Context)
-build.sbt                      Single Stainless project (Stainless runs on every compile)
+cli/src/main/scala/evm/cli/    unverified CLI shell (Main.scala) over the verified core; a second sbt project with no Stainless plugin
+build.sbt                      Two projects: the verified core (Stainless runs on every compile) and the cli shell that depends on it via bytecode
 .github/workflows/verify.yml   CI: one job that verifies the whole tree and runs the unit tests
 ```
 
