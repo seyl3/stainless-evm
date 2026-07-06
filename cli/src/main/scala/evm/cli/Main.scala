@@ -2,7 +2,7 @@ package evm.cli
 
 import stainless.collection.{List => SList, Nil => SNil, Cons}
 import evm.value.Word256
-import evm.code.Code
+import evm.code.{Code, Opcode}
 import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState}
 import evm.exec.{ExecState, Interpreter}
 
@@ -14,9 +14,10 @@ object Main:
   def main(args: Array[String]): Unit =
     if (args.isEmpty) { usage(); return }
     args(0) match
-      case "run"  => run(args.drop(1))
+      case "run"    => run(args.drop(1))
+      case "disasm" => disasm(args.drop(1))
       case "help" | "--help" | "-h" => usage()
-      case other  => Console.err.println(s"unknown command: $other"); usage()
+      case other    => Console.err.println(s"unknown command: $other"); usage()
 
   private def usage(): Unit =
     println(
@@ -25,6 +26,8 @@ object Main:
         |usage:
         |  run <hex> [--gas N] [--calldata HEX] [--value N]
         |      execute bytecode and print status, gas used, and return data
+        |  disasm <hex>
+        |      disassemble bytecode into opcodes with their offsets and immediates
         |
         |example:
         |  run 602a60005260206000f3        # MSTORE 42, RETURN it (returns 0x..2a)""".stripMargin)
@@ -45,6 +48,31 @@ object Main:
     println(s"return:    ${toHex(res.returnData)}")
     println(s"logs:      ${res.logs.size}")
 
+  // Disassemble bytecode: walk it opcode by opcode, printing each offset, mnemonic,
+  // and (for PUSHn) its immediate. Skipping over immediates is what keeps push data
+  // from being mis-read as opcodes.
+  private def disasm(args: Array[String]): Unit =
+    if (args.isEmpty) { Console.err.println("disasm: expected bytecode hex"); return }
+    val bytes = toBytes(parseHex(args(0)))
+    var pc = 0
+    while (pc < bytes.length) do
+      val b = bytes(pc)
+      // Opcode.decode returns a stainless Option, so we branch on isDefined/get
+      // rather than Scala's Some/None.
+      val decoded = Opcode.decode(BigInt(b))
+      if (decoded.isDefined)
+        val op = decoded.get
+        val w = Opcode.pushWidth(op).toInt
+        if (w > 0)
+          val imm = (pc + 1 until math.min(pc + 1 + w, bytes.length)).map(i => f"${bytes(i)}%02x").mkString
+          println(f"0x$pc%04x  ${op.toString}%-13s 0x$imm")
+        else
+          println(f"0x$pc%04x  ${op.toString}")
+        pc += 1 + w
+      else
+        println(f"0x$pc%04x  ${"?"}%-13s 0x$b%02x  (undefined)")
+        pc += 1
+
   // Convert a hex string (optional 0x prefix) into a byte list for the core.
   private def parseHex(s: String): SList[BigInt] =
     val clean = if (s.startsWith("0x")) s.substring(2) else s
@@ -61,6 +89,15 @@ object Main:
         sb.append(f"${(cur.head.toInt & 0xff)}%02x")
         cur = cur.tail
       sb.toString
+
+  // Turn a byte list into an indexable Scala vector
+  private def toBytes(l: SList[BigInt]): Vector[Int] =
+    val buf = scala.collection.mutable.ArrayBuffer[Int]()
+    var cur = l
+    while (!cur.isEmpty) do
+      buf += (cur.head.toInt & 0xff)
+      cur = cur.tail
+    buf.toVector
 
   // The value following `name` in the argument list, if present.
   private def flag(args: Array[String], name: String): Option[String] =

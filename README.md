@@ -62,8 +62,24 @@ logs:      0
 ```
 
 `--gas` sets the gas limit (default 1,000,000), `--calldata` supplies input bytes
-(hex), and `--value` sets the call value in wei. `sbt "cli/run help"` prints usage.
-Running the CLI recompiles the core dependency, so Stainless re-verifies it (cached).
+(hex), and `--value` sets the call value in wei.
+
+The `disasm` command prints bytecode as opcodes with their offsets and immediates:
+
+```
+sbt "cli/run disasm 602a60005260206000f3"
+```
+```
+0x0000  PUSH1         0x2a
+0x0002  PUSH1         0x00
+0x0004  MSTORE
+0x0005  PUSH1         0x20
+0x0007  PUSH1         0x00
+0x0009  RETURN
+```
+
+`sbt "cli/run help"` prints usage. Running the CLI recompiles the core dependency,
+so Stainless re-verifies it (cached).
 
 ## Project structure
 
