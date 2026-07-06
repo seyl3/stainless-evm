@@ -5,6 +5,8 @@ import stainless.annotation.*
 import stainless.proof.*
 import evm.value.Word256
 
+// A 256-bit key/value store, used for both persistent storage (SLOAD/SSTORE) and
+// transient storage (TLOAD/TSTORE). Absent keys read as zero.
 object Storage {
   def empty: Storage = Storage(Map.empty[Word256, Word256])
 }
@@ -19,6 +21,7 @@ case class Storage(data: Map[Word256, Word256]) {
     Storage(data.updated(key, value))
   }.ensuring(r => r.load(key) == value)
 
+  // A write to one key leaves every other key unchanged.
   @ghost
   def storePreservesOther(key: Word256, value: Word256, other: Word256): Boolean = {
     require(other != key)

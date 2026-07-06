@@ -7,12 +7,16 @@ import stainless.proof.*
 import evm.value.Word256
 import evm.math.Collections
 
+// The EVM operand stack: a list of 256-bit words, head = top, capped at 1024.
 object Stack {
     val MAXIMUM_STACK_SIZE: BigInt = 1024
 
     def empty: Stack = Stack(Nil())
 }
 
+// The depth bound is a class invariant, so push carries a not-full precondition
+// and every operation is proven to respect the 1024-item limit. Each op pins its
+// exact effect (new head, preserved tail) rather than just the size.
 case class Stack(data: List[Word256]) {
     require(data.size <= Stack.MAXIMUM_STACK_SIZE)
 
@@ -45,6 +49,8 @@ case class Stack(data: List[Word256]) {
         && result.data.head == data(n - 1)
         && result.data.tail == data)
 
+    // SWAPn: exchange the top with the (n+1)th item via two list updates. The
+    // Collections lemma proves the first update to index 0 survives the second.
     def swap(n: BigInt): Stack = {
         require(n >= 1 && n < data.size)
         val top = data(0)
@@ -58,6 +64,8 @@ case class Stack(data: List[Word256]) {
         && result.data(0) == data(n)
         && result.data(n) == data(0))
 
+    // A swap leaves every other position untouched (used to reason about the rest
+    // of the stack after a SWAP).
     @ghost
     def swapPreservesOther(n: BigInt, k: BigInt): Boolean = {
         require(n >= 1 && n < data.size && 0 <= k && k < data.size && k != 0 && k != n)

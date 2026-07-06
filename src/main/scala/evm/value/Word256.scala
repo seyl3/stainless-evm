@@ -7,10 +7,13 @@ import evm.math.EvmMath
 import evm.math.EvmMath.{MODULO, MAX_VALUE, pow, inBounds}
 import evm.math.Bitwise
 
+// Companion holding constants and the three-operand modular ops (ADDMOD, MULMOD),
+// which take an explicit modulus rather than the implicit 2^256 of the binary ops.
 object Word256 {
   val Zero: Word256 = Word256(BigInt(0))
   val One: Word256  = Word256(BigInt(1))
 
+  // (a + b) mod n, or zero when n == 0, matching ADDMOD.
   def addmod(a: Word256, b: Word256, n: Word256): Word256 = {
     if (n == Zero) Zero
     else Word256((a.value + b.value) % n.value)
@@ -28,9 +31,17 @@ object Word256 {
     && inBounds(result.value))
 }
 
+// The 256-bit EVM word: a BigInt pinned to [0, 2^256) by the class invariant.
+// Every operation carries an exact-value postcondition (not just a bounds check),
+// so the interpreter reasons about results, not only their range. Unsigned binary
+// ops wrap mod 2^256; signed ops (sdiv/smod/slt/sgt/sar) go through EvmMath's
+// two's-complement toSigned/wrap; bitwise ops delegate to the Bitwise axioms.
 case class Word256(value: BigInt) {
   require(inBounds(value))
 
+  // Re-exposes the class invariant as an invokable fact, so callers can obtain
+  // value <= MAX_VALUE without the solver unfolding wherever this word came from
+  // (for example a Map lookup). See the Transaction fee bounds.
   @ghost
   def bounded: Boolean = {
     value >= 0 && value <= MAX_VALUE
@@ -70,6 +81,8 @@ case class Word256(value: BigInt) {
      else result.value == value % other.value)
     && inBounds(result.value))
 
+  // Signed division (and smod below): interpret both operands as two's-complement,
+  // divide, then wrap back. toSignedNonZero proves the signed divisor is nonzero.
   def sdiv(other: Word256): Word256 = {
     if (other == Word256.Zero) Word256.Zero
     else {
@@ -92,6 +105,8 @@ case class Word256(value: BigInt) {
      else result.value == EvmMath.wrap(EvmMath.toSigned(value) % EvmMath.toSigned(other.value)))
     && inBounds(result.value))
 
+  // Bitwise ops delegate to the uninterpreted Bitwise functions; the *Bound axioms
+  // discharge that the result stays a valid 256-bit word.
   def &(other: Word256): Word256 = {
     Bitwise.andBound(value, other.value)
     Word256(Bitwise.and(value, other.value))
@@ -119,6 +134,7 @@ case class Word256(value: BigInt) {
     result.value == MAX_VALUE - value
     && inBounds(result.value))
 
+  // Modular exponentiation (EXP). powNonNeg gives the solver pow(value, exp) >= 0.
   def **(exp: Word256): Word256 = {
     EvmMath.powNonNeg(value, exp.value)
     Word256(pow(value, exp.value) % MODULO)
@@ -126,6 +142,9 @@ case class Word256(value: BigInt) {
     result.value == pow(value, exp.value) % MODULO
     && inBounds(result.value))
 
+  // Shifts (SHL/SHR/SAR): a shift of 256 or more yields zero (or all-ones for a
+  // negative SAR). SHL/SHR model the shift as multiply/divide by 2^shift; the pow
+  // lemmas supply positivity of the divisor/factor. SAR uses signed floorDiv.
   def shl(shift: Word256): Word256 = {
     EvmMath.powNonNeg(BigInt(2), shift.value)
     if (shift.value >= BigInt(256)) Word256.Zero
@@ -158,6 +177,8 @@ case class Word256(value: BigInt) {
      else result.value == EvmMath.wrap(EvmMath.floorDiv(EvmMath.toSigned(value), pow(BigInt(2), shift.value))))
     && inBounds(result.value))
 
+  // BYTE: extract byte i (0 = most significant) by shifting it down and masking to
+  // 8 bits; zero if i >= 32. The pow lemmas bound the shift amount and the mask.
   def byte(i: Word256): Word256 = {
     if (i.value >= BigInt(32)) Word256.Zero
     else {
@@ -172,6 +193,9 @@ case class Word256(value: BigInt) {
      else result.value == (value / pow(BigInt(2), BigInt(8) * (BigInt(31) - i.value))) % pow(BigInt(2), BigInt(8)))
     && inBounds(result.value))
 
+  // SIGNEXTEND: treat the low (b+1) bytes as a signed value and extend its sign
+  // bit through the high bytes; a no-op when b >= 31. The pow lemmas bound the
+  // mask `m` and the sign-bit position.
   def signextend(b: Word256): Word256 = {
     if (b.value >= BigInt(31)) this
     else {
@@ -192,6 +216,7 @@ case class Word256(value: BigInt) {
         else value % pow(BigInt(2), BigInt(8) * (b.value + 1))))
     && inBounds(result.value))
 
+  // CLZ (EIP-7939): number of leading zero bits over 256 bits (256 when zero).
   def clz: Word256 = {
     EvmMath.n256InBounds
     Word256(EvmMath.clzWidth(value, BigInt(256)))

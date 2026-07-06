@@ -2,6 +2,9 @@ package evm.code
 
 import stainless.lang.*
 
+// The Osaka opcode set as an ADT (one case per instruction, each annotated with
+// its meaning). The companion maps opcodes to and from their hex encoding, to
+// their static base gas, and to the PUSH immediate width.
 enum Opcode:
   case STOP // Halts execution
   case ADD // Addition operation
@@ -165,6 +168,7 @@ enum Opcode:
   case SELFDESTRUCT // Halt execution and register account for later deletion
 
 object Opcode:
+  // Opcode to its byte encoding.
   def hex(op: Opcode): Int = op match
     case Opcode.STOP => 0x00
     case Opcode.ADD => 0x01
@@ -317,6 +321,7 @@ object Opcode:
     case Opcode.INVALID => 0xFE
     case Opcode.SELFDESTRUCT => 0xFF
 
+  // Decode a code byte to its opcode, or None for an undefined byte.
   def decode(b: BigInt): Option[Opcode] =
     if (b == BigInt(0x00)) Some(Opcode.STOP)
     else if (b == BigInt(0x01)) Some(Opcode.ADD)
@@ -471,6 +476,8 @@ object Opcode:
     else None()
 
 
+  // Static base cost of an opcode. Dynamic costs (memory expansion, cold/warm
+  // access, copy words, refunds) are added on top by the interpreter.
   def baseGas(op: Opcode): BigInt = { op match
     case Opcode.STOP => BigInt(0)
     case Opcode.ADD => BigInt(3)
@@ -624,6 +631,9 @@ object Opcode:
     case Opcode.SELFDESTRUCT => BigInt(5000)
   }.ensuring(g => g >= 0)
 
+  // Immediate width in bytes: PUSHn carries n inline bytes (0 for PUSH0), which
+  // the pc skips over. Every non-push opcode is 0. Used by JUMPDEST analysis and
+  // pc advancement so immediates are never mistaken for opcodes.
   def pushWidth(op: Opcode): BigInt = {
     op match
       case Opcode.PUSH1 => BigInt(1)

@@ -6,12 +6,18 @@ import stainless.annotation.*
 import stainless.proof.*
 import evm.math.EvmMath.pow
 
+// Byte-array packing over a sparse Map[address, byte] (the model of EVM memory).
+// Provides big-endian read/write of multi-byte words and block copies, plus the
+// framing lemmas (a write leaves bytes before/after untouched) and the read-write
+// round-trip that the Memory operations rely on for their exact postconditions.
 object Bytes {
 
+  // Euclidean mod 256: normalize any integer to a single byte [0, 256).
   def emod256(x: BigInt): BigInt = {
     ((x % 256) + 256) % 256
   }.ensuring(r => 0 <= r && r < 256)
 
+  // The byte stored at address a, or zero for an untouched cell.
   def getByteOf(data: Map[BigInt, BigInt], a: BigInt): BigInt = {
     if (data.contains(a)) emod256(data(a)) else BigInt(0)
   }.ensuring(r => 0 <= r && r < 256)
@@ -20,6 +26,7 @@ object Bytes {
     data.updated(a, emod256(b))
   }.ensuring(r => getByteOf(r, a) == emod256(b))
 
+  // Big-endian integer packed from n bytes starting at a (the MLOAD value).
   def readBytes(data: Map[BigInt, BigInt], a: BigInt, n: BigInt): BigInt = {
     require(n >= 0)
     decreases(n)
@@ -27,6 +34,8 @@ object Bytes {
     else getByteOf(data, a) * pow(BigInt(256), n - 1) + readBytes(data, a + 1, n - 1)
   }.ensuring(r => 0 <= r && r < pow(BigInt(256), n))
 
+  // Store v big-endian across n bytes from a (the MSTORE effect); peels off the
+  // most significant byte (v / 256^(n-1)) each step.
   def writeBytes(data: Map[BigInt, BigInt], a: BigInt, n: BigInt, v: BigInt): Map[BigInt, BigInt] = {
     require(n >= 0 && v >= 0)
     decreases(n)
@@ -37,6 +46,9 @@ object Bytes {
     }
   }
 
+  // Framing and round-trip lemmas below, proven by induction on the byte count.
+  // They let Memory/copy ops state exact per-byte postconditions: a write touches
+  // only [a, a+n) and reading back what was written returns the original value.
   @ghost
   def writeBytesPreservesBefore(data: Map[BigInt, BigInt], a: BigInt, n: BigInt, v: BigInt, x: BigInt): Boolean = {
     require(n >= 0 && v >= 0 && x < a)
@@ -82,6 +94,7 @@ object Bytes {
     }
   }.holds
 
+  // Map-to-map block copy (MCOPY): len bytes from `from` to `to`.
   def copyBytes(orig: Map[BigInt, BigInt], dst: Map[BigInt, BigInt],
                 to: BigInt, from: BigInt, len: BigInt): Map[BigInt, BigInt] = {
     require(len >= 0)
@@ -90,6 +103,7 @@ object Bytes {
     else copyBytes(orig, setByteOf(dst, to, getByteOf(orig, from)), to + 1, from + 1, len - 1)
   }
 
+  // List-to-map block copy with zero padding past the source end (CALLDATACOPY).
   def copyFromList(dst: Map[BigInt, BigInt], to: BigInt,
                    src: List[BigInt], from: BigInt, len: BigInt): Map[BigInt, BigInt] = {
     require(from >= 0 && len >= 0)
@@ -98,6 +112,7 @@ object Bytes {
     else copyFromList(setByteOf(dst, to, ByteList.byteOrZero(src, from)), to + 1, src, from + 1, len - 1)
   }
 
+  // Read len memory bytes out as a list (RETURN/log data capture).
   def readList(data: Map[BigInt, BigInt], from: BigInt, len: BigInt): List[BigInt] = {
     require(len >= 0)
     decreases(len)

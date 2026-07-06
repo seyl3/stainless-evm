@@ -8,6 +8,9 @@ import evm.math.EvmMath.pow
 import evm.math.Bytes
 import evm.math.ByteList
 
+// A contract's bytecode as a byte list, with opcode decoding, JUMPDEST analysis,
+// and PUSH-immediate reading. This layer sits below env/exec so an Account can
+// hold Code.
 object Code:
   def empty: Code = Code(Nil())
 
@@ -25,6 +28,9 @@ case class Code(code: List[BigInt]):
     Opcode.decode(code(pc))
   }
 
+  // Scan from index i collecting the valid JUMPDEST positions. Skipping each
+  // opcode's immediate bytes (pushWidth) is what makes a JUMPDEST byte that is
+  // actually PUSH data correctly excluded. Decreases on the remaining code.
   def jumpDestsFrom(i: BigInt, acc: Set[BigInt]): Set[BigInt] = {
     require(0 <= i && i <= code.size)
     decreases(code.size - i)
@@ -39,6 +45,7 @@ case class Code(code: List[BigInt]):
     }
   }
 
+  // The set of legal jump targets; JUMP/JUMPI check membership.
   def validJumpDests: Set[BigInt] = jumpDestsFrom(0, Set.empty[BigInt])
 
   def isValidJumpDest(pc: BigInt): Boolean = validJumpDests.contains(pc)
@@ -53,6 +60,8 @@ case class Code(code: List[BigInt]):
     ByteList.readWord(code, start, n)
   }.ensuring(r => 0 <= r && r < pow(BigInt(256), n))
 
+  // The n-byte PUSH immediate at `start`, as a word. pow256Le bounds it below
+  // 2^256 so it fits a Word256.
   def pushValue(start: BigInt, n: BigInt): Word256 = {
     require(start >= 0 && 0 <= n && n <= 32)
     EvmMath.pow256Le(n)

@@ -5,16 +5,23 @@ import evm.value.Word256
 import evm.code.Code
 import evm.state.Storage
 
+// An account: balance, code, storage, and nonce. The two-argument apply builds a
+// fresh account (empty storage, zero nonce).
 object Account:
   def apply(balance: Word256, code: Code): Account = Account(balance, code, Storage.empty, BigInt(0))
 
 case class Account(balance: Word256, code: Code, storage: Storage, nonce: BigInt)
 
+// The world state: a map from address to account, with default-zero lookups for
+// absent accounts. Each `with*` updater proves it changes only its target field
+// and preserves the other three, so callers can compose them without re-proving
+// that a balance write left storage or nonce intact.
 object WorldState:
   def empty: WorldState = WorldState(Map.empty[Address, Account])
 
 case class WorldState(accounts: Map[Address, Account]):
 
+  // The account at a, or a fresh empty account for an address never seen.
   def getOrEmpty(a: Address): Account = {
     if (accounts.contains(a)) accounts(a) else Account(Word256.Zero, Code.empty)
   }
@@ -54,6 +61,8 @@ case class WorldState(accounts: Map[Address, Account]):
     r.nonceOf(a) == n && r.balanceOf(a) == balanceOf(a)
     && r.codeOf(a) == codeOf(a) && r.storageOf(a) == storageOf(a))
 
+  // Move value from one account to another. Sufficient balance is a precondition
+  // (so the subtraction cannot wrap), pushing the obligation onto every caller.
   def transfer(from: Address, to: Address, value: Word256): WorldState = {
     require(balanceOf(from).value >= value.value)
     val w1 = withBalance(from, balanceOf(from) - value)

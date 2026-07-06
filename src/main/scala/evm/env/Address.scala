@@ -4,10 +4,14 @@ import evm.math.EvmMath
 import evm.math.EvmMath.pow
 import evm.value.Word256
 
+// A 160-bit account address. Lives in its own package (evm.env) to avoid the
+// case-insensitive-filesystem clash between `Address` and the `ADDRESS` opcode.
 object Address:
   val MODULO: BigInt = pow(BigInt(2), BigInt(160))
   def zero: Address = Address(BigInt(0))
 
+  // Truncate a 256-bit word to its low 160 bits (how the EVM reads an address
+  // off the stack). powTwoPos gives 2^160 > 0 for the modulo.
   def fromWord(w: Word256): Address = {
     EvmMath.powTwoPos(BigInt(160))
     Address(w.value % MODULO)
@@ -16,6 +20,8 @@ object Address:
 case class Address(value: BigInt):
   require(0 <= value && value < Address.MODULO)
 
+  // Zero-extend to a 256-bit word; the monotonicity lemma proves a 160-bit value
+  // fits in Word256 range.
   def toWord: Word256 = {
     EvmMath.powMonotone(BigInt(160), BigInt(256))
     Word256(value)

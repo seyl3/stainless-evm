@@ -4,6 +4,9 @@ import stainless.collection.*
 import stainless.lang.*
 import evm.value.Word256
 
+// Read-only execution context, split three ways: BlockContext (per block),
+// TxContext (per transaction), MessageContext (per call frame). These back the
+// environment opcodes (COINBASE, TIMESTAMP, ORIGIN, CALLER, CALLVALUE, ...).
 object BlockContext:
   def empty: BlockContext = BlockContext(Address.zero, Word256.Zero, Word256.Zero,
     Word256.Zero, Word256.Zero, Word256.Zero, Word256.Zero, Word256.Zero, Map.empty[Word256, Word256])
@@ -39,6 +42,8 @@ case class TxContext(
   def blobHash(idx: Word256): Word256 =
     if (idx.value < blobHashes.size) blobHashes(idx.value) else Word256.Zero
 
+// The current call frame: the executing account (self), its caller, the value
+// sent with the call, and the input data. A CALL/DELEGATECALL builds a fresh one.
 object MessageContext:
   def empty: MessageContext = MessageContext(Address.zero, Address.zero, Word256.Zero, Nil())
 

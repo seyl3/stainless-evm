@@ -28,13 +28,23 @@ case class CallReject(state: ExecState) extends CallPrep
 case class CallEnter(child: ExecState, parentForwarded: ExecState, rest: Stack, forwarded: BigInt,
                      commitState: Boolean, sameAccount: Boolean, self: Address, preWorld: WorldState) extends CallPrep
 
+// The interpreter. `step` charges base gas and dispatches one opcode to a helper;
+// `run` iterates step to completion and also handles the recursive call opcodes.
+// Each helper takes and returns an ExecState and carries a functional
+// postcondition of the form `r.isRunning ==> (exact effect)`, so correctness (not
+// just safety) is proven per opcode. A stack underflow, gas exhaustion, or bad
+// jump routes to `fail`. On the fallback smt-z3 solver a helper must fold its
+// changes into a single `copy` rather than chaining copies, or the VC blows up.
 object Interpreter:
 
+  // Memory-expansion gas for an access reaching byte `end`, in words.
   def memExpandCost(st: ExecState, end: BigInt): BigInt = {
     require(end >= 0)
     Gas.memoryExpansionCost(st.memory.size / 32, st.memory.expandedTo(end) / 32)
   }.ensuring(r => r >= 0)
 
+  // Push a constant word (PUSH0 and the environment reads route here), advancing
+  // the pc by one; fails on stack overflow.
   def pushConst(st: ExecState, v: Word256): ExecState = {
     if (st.stack.data.size >= Stack.MAXIMUM_STACK_SIZE) st.fail
     else st.copy(stack = st.stack.push(v)).advancePc(1)
@@ -45,6 +55,9 @@ object Interpreter:
           && r.stack.data.head == v
           && r.stack.data.tail == st.stack.data)))
 
+  // The arithmetic/bitwise/comparison dispatch shared by most opcodes: pop 1, 2,
+  // or 3 words, push f applied to them, advance the pc. The passed f is the
+  // opcode's Word256 operation, so the postcondition pins the exact result.
   def unop(st: ExecState, f: Word256 => Word256): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -87,6 +100,8 @@ object Interpreter:
           && r.stack.data.head == f(st.stack.data.head, st.stack.data.tail.head, st.stack.data.tail.tail.head)
           && r.stack.data.tail == st.stack.data.tail.tail.tail)))
 
+  // PUSHn / DUPn / SWAPn / POP. pushN reads the n-byte immediate after the opcode
+  // and advances past it; dupN clones the nth item; swapN exchanges top and nth.
   def pushN(st: ExecState, n: BigInt): ExecState = {
     require(0 <= n && n <= 32)
     if (st.stack.data.size >= Stack.MAXIMUM_STACK_SIZE) st.fail
@@ -129,6 +144,8 @@ object Interpreter:
          (st.stack.data.nonEmpty && r.pc == st.pc + 1
           && r.stack.data == st.stack.data.tail)))
 
+  // MLOAD / MSTORE / MSTORE8: read or write memory, charging the expansion gas for
+  // growing active memory to cover the access. MSTORE8 writes a single byte.
   def mload(st: ExecState): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -177,6 +194,8 @@ object Interpreter:
           && r.stack.data == st.stack.data.tail.tail
           && r.memory.getByte(st.stack.data.head.value) == st.stack.data.tail.head.value % 256)))
 
+  // MCOPY: in-memory block copy, charging per-word plus expansion to the furthest
+  // of the source and destination ranges. A zero-length copy is free of both.
   def mcopyOp(st: ExecState): ExecState = {
     if (st.stack.data.size < 3) st.fail
     else {
@@ -196,6 +215,8 @@ object Interpreter:
           && r.memory == st.memory.mcopy(st.stack.data.head.value,
                st.stack.data.tail.head.value, st.stack.data.tail.tail.head.value))))
 
+  // BALANCE / EXTCODESIZE: read another account, paying the EIP-2929 cold surcharge
+  // (2500 over the warm base) on first touch and marking it warm afterward.
   def balanceOp(st: ExecState): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -233,6 +254,8 @@ object Interpreter:
           && r.stack.data.tail == st.stack.data.tail
           && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head)))))
 
+  // TLOAD / TSTORE: EIP-1153 transient storage, flat-priced with no cold/warm and
+  // cleared at end of transaction. TSTORE fails in a static context.
   def tload(st: ExecState): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -260,6 +283,8 @@ object Interpreter:
           && r.stack.data == st.stack.data.tail.tail
           && r.transient.load(st.stack.data.head) == st.stack.data.tail.head)))
 
+  // SLOAD: read a storage slot, paying the cold surcharge (2000 over the warm base)
+  // on first access this tx and marking the slot warm.
   def sload(st: ExecState): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -277,6 +302,11 @@ object Interpreter:
           && r.stack.data.tail == st.stack.data.tail
           && r.accessedSlots.contains(st.stack.data.head))))
 
+  // SSTORE: write a storage slot. Fails in a static context or below the EIP-2200
+  // stipend sentry (gas must exceed 2300). The charge and refund come from Gas,
+  // keyed on the slot's original (start-of-tx), current, and new values; the base
+  // 100 is subtracted here because step already charged it. Updates the refund
+  // counter (EIP-3529).
   def sstore(st: ExecState): ExecState = {
     if (st.static || st.stack.data.size < 2 || st.gas + 100 <= 2300) st.fail
     else {
@@ -297,6 +327,9 @@ object Interpreter:
           && r.storage.load(st.stack.data.head) == st.stack.data.tail.head
           && r.accessedSlots.contains(st.stack.data.head))))
 
+  // JUMP / JUMPI: set the pc to the target, but only if it is a valid JUMPDEST
+  // (per the code's precomputed analysis); otherwise fail. JUMPI jumps only when
+  // the condition is nonzero, else falls through.
   def jump(st: ExecState): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -330,6 +363,9 @@ object Interpreter:
               else st.code.isValidJumpDest(st.stack.data.head.value)
                    && r.pc == st.stack.data.head.value))))
 
+  // RETURN / REVERT: capture the memory region [offset, offset+len) as the frame's
+  // return data and stop. RETURN halts (success); REVERT reverts (state rolled back
+  // by the caller) but still surfaces the data.
   def returnOp(st: ExecState): ExecState = {
     if (st.stack.data.size < 2) st.fail
     else {
@@ -364,6 +400,8 @@ object Interpreter:
          (st.stack.data.size >= 2
           && r.returnData == Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value))))
 
+  // CALLDATALOAD: read a 32-byte word from calldata at offset, zero-padded past
+  // the end. pow256Le(32) bounds the result to a Word256.
   def calldataload(st: ExecState): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -378,6 +416,10 @@ object Interpreter:
           && r.stack.data.head.value == ByteList.readWord(st.msg.callData, st.stack.data.head.value, 32)
           && r.stack.data.tail == st.stack.data.tail)))
 
+  // CALLDATACOPY / CODECOPY / RETURNDATACOPY: copy a source region into memory,
+  // zero-padded past the source end, charging per-word plus expansion. They differ
+  // only in the source (calldata / this code / prior return data). RETURNDATACOPY
+  // additionally fails if the read runs past the return data (no zero padding).
   def calldatacopy(st: ExecState): ExecState = {
     if (st.stack.data.size < 3) st.fail
     else {
@@ -436,6 +478,7 @@ object Interpreter:
          (st.stack.data.size >= 3 && r.pc == st.pc + 1
           && r.stack.data == st.stack.data.tail.tail.tail)))
 
+  // Pop the n topic words for a LOGn off the stack, in order.
   def popTopics(s: Stack, n: BigInt): (List[Word256], Stack) = {
     require(n >= 0 && s.data.size >= n)
     decreases(n)
@@ -450,6 +493,9 @@ object Interpreter:
     && r._1 == s.data.take(n)
     && r._2.data == s.data.drop(n))
 
+  // LOG0-4: append a log record (emitter, n topics, memory data region) to the
+  // frame's log list, charging 8 per data byte plus expansion. Fails in a static
+  // context. The postcondition pins the exact record appended.
   def logN(st: ExecState, n: BigInt): ExecState = {
     require(0 <= n && n <= 4)
     if (st.static || st.stack.data.size < 2 + n) st.fail
@@ -495,6 +541,8 @@ object Interpreter:
           && r.stack.data.head == Keccak256.hash(Bytes.readList(st.memory.data, st.stack.data.head.value, st.stack.data.tail.head.value))
           && r.stack.data.tail == st.stack.data.tail.tail)))
 
+  // EXTCODEHASH: the keccak of an account's code, or zero for an account that does
+  // not exist. Cold/warm priced like the other account reads.
   def extcodehashOp(st: ExecState): ExecState = {
     if (st.stack.data.isEmpty) st.fail
     else {
@@ -517,6 +565,8 @@ object Interpreter:
           && r.stack.data.tail == st.stack.data.tail
           && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head)))))
 
+  // EXTCODECOPY: copy another account's code into memory (zero-padded past its
+  // end), charging the account cold/warm surcharge plus the per-word copy cost.
   def extcodecopyOp(st: ExecState): ExecState = {
     if (st.stack.data.size < 4) st.fail
     else {
@@ -582,6 +632,9 @@ object Interpreter:
           && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head))
           && r.world == st.world.transfer(st.msg.self, Address.fromWord(st.stack.data.head), st.world.balanceOf(st.msg.self)))))
 
+  // Dispatch a single already-base-charged opcode to its helper. Called by step
+  // with base gas removed; the call opcodes are not handled here but in run (they
+  // need to spawn a child frame). An unrecognized opcode falls through to fail.
   def execute(s1: ExecState, op: Opcode): ExecState = {
     op match
       case Opcode.STOP => s1.halt
@@ -758,6 +811,10 @@ object Interpreter:
       case _ => s1.fail
   }.ensuring(r => !r.isRunning || (r.gas <= s1.gas && Opcode.baseGas(op) >= 1))
 
+  // One machine step: halt at end of code, fail on an undefined byte or when the
+  // base gas is unaffordable, otherwise charge base gas and execute. The `r.gas <
+  // s.gas` postcondition (base gas is always >= 1 for real opcodes) is what makes
+  // the gas measure strictly decrease, so run terminates even across backward jumps.
   def step(s: ExecState): ExecState = {
 
     if (!s.isRunning) s
@@ -767,7 +824,7 @@ object Interpreter:
       s.code.opcodeAt(s.pc) match
         case None() => s.fail
         case Some(op) =>
-          
+
           val cost = Opcode.baseGas(op)
           if (s.outOfGas(cost)) s.fail
           else execute(s.chargeGas(cost), op)
@@ -950,6 +1007,11 @@ object Interpreter:
     ).advancePc(1)
   }.ensuring(r => r.gas <= enter.parentForwarded.gas + enter.forwarded)
 
+  // Drive the frame to a stopped state. The call opcodes are intercepted here (not
+  // in execute) so run stays self-recursive with a single `decreases(s.gas)`
+  // measure: the child runs on strictly less gas (63/64 rule), and the merged
+  // parent's gas is bounded by parentForwarded + forwarded, which mergeCall proves
+  // is also below s.gas. Every other opcode goes through step.
   def run(s: ExecState): ExecState = {
     decreases(s.gas)
     if (!s.isRunning) s

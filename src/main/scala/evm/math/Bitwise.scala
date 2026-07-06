@@ -4,6 +4,12 @@ import stainless.lang._
 import stainless.annotation._
 import stainless.proof._
 
+// The bitwise model for the verifier. `&`, `|`, `^` on BigInt have no SMT theory,
+// so and/or/xor are uninterpreted @extern functions and the algebraic facts below
+// are @extern lemmas whose postconditions are assumed (axioms). Every axiom is
+// true of 256-bit two's-complement, so the trusted surface is sound; it is kept
+// here in one place to stay auditable. `not` is exact arithmetic, so it is
+// verified rather than assumed. See the README "Axioms" section.
 object Bitwise {
   import EvmMath.{MODULO, MAX_VALUE}
 
@@ -16,11 +22,15 @@ object Bitwise {
   @extern @pure
   def xor(a: BigInt, b: BigInt): BigInt = a ^ b
 
+  // NOT is the exact one's-complement over 256 bits, so it is a real verified
+  // function, not an axiom.
   def not(a: BigInt): BigInt = {
     require(a >= 0 && a <= MAX_VALUE)
     MAX_VALUE - a
   }.ensuring(res => res == MAX_VALUE - a && res >= 0 && res <= MAX_VALUE)
 
+  // Axioms below: assumed postconditions (bounds, commutativity, identities,
+  // idempotence, a^a==0), each a standard fact of fixed-width bitwise logic.
   @extern
   def andBound(a: BigInt, b: BigInt): Unit = {
     require(a >= 0 && b >= 0)
@@ -96,6 +106,7 @@ object Bitwise {
     ()
   }.ensuring(_ => or(a, MAX_VALUE) == MAX_VALUE)
 
+  // Verified (not assumed), since `not` is exact arithmetic.
   def notInvolutive(a: BigInt): Boolean = {
     require(a >= 0 && a <= MAX_VALUE)
     not(not(a)) == a

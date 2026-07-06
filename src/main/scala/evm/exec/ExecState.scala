@@ -7,12 +7,19 @@ import evm.value.Word256
 import evm.state.{Stack, Memory, Storage}
 import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState, Log}
 
+// The outcome of a frame: still Running, or Halted (STOP/RETURN), Reverted
+// (REVERT), or Failed (out of gas / invalid). Only Running frames keep stepping.
 enum Status:
   case Running
   case Halted
   case Reverted
   case Failed
 
+// The full machine state of one call frame. Everything the interpreter reads or
+// writes lives here: stack/memory/storage/transient, pc/gas/depth, the static
+// flag and status, return data, the block/tx/message context and world, the
+// EIP-2929 accessed sets, `original` storage (start-of-tx values for SSTORE),
+// emitted logs, and the refund counter.
 object ExecState:
   val MAX_DEPTH: BigInt = 1024
 
@@ -71,6 +78,10 @@ case class ExecState(
     cost > gas
   }
 
+  // The state transitions below each return `copy(...)` and expose that exact copy
+  // in their postcondition. This transparency lets a caller that chains them (for
+  // example chargeGas then advancePc) know precisely which single field changed,
+  // which the solver needs to carry the other fields' values through.
   def chargeGas(cost: BigInt): ExecState = {
     require(cost >= 0 && cost <= gas)
     copy(gas = gas - cost)

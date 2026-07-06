@@ -8,6 +8,8 @@ import evm.math.EvmMath
 import evm.state.Storage
 import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState, Log}
 
+// A transaction to execute: sender, recipient, value, gas limit, the EIP-1559 fee
+// caps, nonce, and calldata.
 case class Transaction(
   origin: Address,
   to: Address,
@@ -20,6 +22,8 @@ case class Transaction(
 ):
   require(gasLimit >= 0 && nonce >= 0)
 
+// The outcome of running a transaction: final status, gas billed and refunded,
+// emitted logs, output data, and the resulting world state.
 case class TxResult(
   status: Status,
   gasUsed: BigInt,
@@ -29,13 +33,17 @@ case class TxResult(
   world: WorldState
 )
 
+// The transaction layer: intrinsic gas, EIP-1559 fee handling, and settlement,
+// wrapping the interpreter's frame execution. `run` is the top-level entry point.
 object Transaction:
 
+  // Precompile addresses, pre-warmed (EIP-2929) so a first call is warm-priced.
   val precompiles: Set[Address] = Set(
     Address(BigInt(1)), Address(BigInt(2)), Address(BigInt(3)), Address(BigInt(4)),
     Address(BigInt(5)), Address(BigInt(6)), Address(BigInt(7)), Address(BigInt(8)),
     Address(BigInt(9)), Address(BigInt(10)), Address(BigInt(256)))
 
+  // EIP-7623 calldata token count: 1 per zero byte, 4 per nonzero byte.
   def tokens(data: List[BigInt]): BigInt = {
     decreases(data)
     data match
@@ -43,14 +51,18 @@ object Transaction:
       case Cons(b, t) => (if (Bytes.emod256(b) == 0) BigInt(1) else BigInt(4)) + tokens(t)
   }.ensuring(r => r >= 0)
 
+  // Standard intrinsic cost: 21000 plus 4 per calldata token.
   def intrinsicGas(data: List[BigInt]): BigInt = {
     BigInt(21000) + 4 * tokens(data)
   }.ensuring(r => r >= 21000)
 
+  // EIP-7623 floor: the minimum a tx must pay (21000 plus 10 per token).
   def floorGas(data: List[BigInt]): BigInt = {
     BigInt(21000) + 10 * tokens(data)
   }.ensuring(r => r >= 21000)
 
+  // EIP-1559 per-gas price actually charged: base fee plus the priority tip,
+  // where the tip is capped at maxFee - baseFee. Proven to lie in [baseFee, maxFee].
   def effectiveGasPrice(maxFee: Word256, maxPriority: Word256, baseFee: Word256): Word256 = {
     require(baseFee.value <= maxFee.value)
     val cap = maxFee.value - baseFee.value
@@ -58,6 +70,10 @@ object Transaction:
     Word256(baseFee.value + prio)
   }.ensuring(r => baseFee.value <= r.value && r.value <= maxFee.value)
 
+  // Post-execution accounting: compute gas used (with the EIP-3529 refund capped
+  // at gasUsed/5 and the EIP-7623 floor), commit the recipient storage on success
+  // (or roll back to worldOnFail), refund the unused gas in wei to the sender, and
+  // pay the priority tip to the coinbase.
   def settle(tx: Transaction, floor: BigInt, price: Word256, baseFee: Word256,
              coinbase: Address, worldOnFail: WorldState, fin: ExecState): TxResult = {
     require(0 <= floor && floor <= tx.gasLimit
@@ -75,6 +91,8 @@ object Transaction:
     val gasUsed = if (afterRefund < floor) floor else afterRefund
     val unused = tx.gasLimit - gasUsed
     val prio = price.value - baseFee.value
+    // Bound the two wei products below MAX_VALUE via unused,gasUsed <= gasLimit and
+    // prio <= price, so the Word256 constructions cannot overflow.
     EvmMath.mulNonNeg(unused, price.value)
     EvmMath.mulLeMonoLeft(unused, tx.gasLimit, price.value)
     EvmMath.mulNonNeg(gasUsed, prio)
@@ -91,6 +109,9 @@ object Transaction:
     else TxResult(fin.status, gasUsed, BigInt(0), Nil(), Nil(), w2)
   }.ensuring(r => floor <= r.gasUsed && r.gasUsed <= tx.gasLimit && r.gasRefunded >= 0)
 
+  // The charge-execute-settle body, run only once the tx is known valid. Debits
+  // gasLimit*price upfront and bumps the nonce, transfers the call value, warms the
+  // origin/recipient/coinbase and precompiles, runs the frame, then settles.
   def execTx(tx: Transaction, block: BlockContext, world: WorldState,
              intrinsic: BigInt, floor: BigInt): TxResult = {
     require(0 <= intrinsic && intrinsic <= floor && floor <= tx.gasLimit
@@ -102,6 +123,9 @@ object Transaction:
     EvmMath.mulNonNeg(tx.gasLimit, price.value)
     EvmMath.mulLeMono(tx.gasLimit, price.value, tx.maxFeePerGas.value)
     val upfront = tx.gasLimit * price.value
+    // upfront (gasLimit*price) fits in a Word256: it is <= gasLimit*maxFee <=
+    // senderBal <= MAX_VALUE. bounded pulls the balance bound off the Word256
+    // directly (the solver cannot prove it through the balanceOf Map lookup).
     senderBal.bounded
     assert(upfront + tx.value.value <= senderBal.value)
     EvmMath.sumBound(upfront, tx.value.value, senderBal.value)
@@ -115,9 +139,15 @@ object Transaction:
     val init = ExecState.initialWith(w2.codeOf(tx.to), execGas, block, txctx, msg, w2)
       .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase),
             storage = s, original = s)
+    // settle commits onto the post-execution world (fin.world), which already
+    // holds any nested-call state changes; w1 is the pre-execution world to roll
+    // back to on revert/failure (value transfer undone, gas still paid).
     settle(tx, floor, price, block.baseFee, block.coinbase, w1, Interpreter.run(init))
   }.ensuring(r => 0 <= r.gasUsed && r.gasUsed <= tx.gasLimit && r.gasRefunded >= 0)
 
+  // Top-level entry. Rejects a tx below the gas floor (billing its whole limit) or
+  // one that is otherwise invalid (fee caps inconsistent, wrong nonce, or the
+  // sender cannot cover gasLimit*maxFee + value) without charging it, then runs it.
   def run(tx: Transaction, block: BlockContext, world: WorldState): TxResult = {
     val t = tokens(tx.data)
     val intrinsic = BigInt(21000) + 4 * t

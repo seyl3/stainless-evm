@@ -4,11 +4,16 @@ import stainless.lang._
 import stainless.annotation._
 import stainless.proof._
 
+// Number theory for 256-bit EVM arithmetic: the modulus, exponentiation, byte
+// length, signed interpretation, and the inductive lemmas the solver needs (it
+// cannot do induction or nonlinear reasoning itself). Type-free foundation layer.
 object EvmMath {
-  val MODULO: BigInt    = pow(BigInt(2), BigInt(256))
-  val MAX_VALUE: BigInt = MODULO - 1
-  val SIGN_BOUND: BigInt = pow(BigInt(2), BigInt(255))
+  val MODULO: BigInt    = pow(BigInt(2), BigInt(256)) // 2^256, the wrap-around modulus
+  val MAX_VALUE: BigInt = MODULO - 1                  // largest 256-bit value
+  val SIGN_BOUND: BigInt = pow(BigInt(2), BigInt(255)) // first negative value in two's-complement
 
+  // base^exp by structural recursion on exp (an executable definition the lemmas
+  // reason about, not fast exponentiation).
   def pow(base: BigInt, exp: BigInt): BigInt = {
     require(exp >= 0)
     decreases(exp)
@@ -16,14 +21,19 @@ object EvmMath {
     else base * pow(base, exp - 1)
   }.ensuring(res => (base >= 0 ==> res >= 0) && (base >= 1 ==> res >= 1))
 
+  // Minimal number of base-256 digits of v (0 for v == 0); the EXP exponent size.
   def byteLength(v: BigInt): BigInt = {
     require(v >= 0)
     decreases(v)
     if (v == 0) BigInt(0) else 1 + byteLength(v / 256)
   }.ensuring(r => r >= 0)
 
+  // The Word256 range predicate, reused as the class invariant.
   def inBounds(v: BigInt): Boolean = v >= 0 && v <= MAX_VALUE
 
+  // Two's-complement reading of an unsigned 256-bit value into [-2^255, 2^255).
+  // The lemma calls give the solver 2^255 > 0 and MODULO == 2*SIGN_BOUND, which
+  // it needs to place the branch cut.
   def toSigned(v: BigInt): BigInt = {
     require(v >= 0 && v < MODULO)
     signBoundDoubles
@@ -31,17 +41,23 @@ object EvmMath {
     if (v < SIGN_BOUND) v else v - MODULO
   }.ensuring(r => r >= -SIGN_BOUND && r < SIGN_BOUND)
 
+  // Reduce any integer into [0, MODULO); inverse of toSigned. moduloPos supplies
+  // MODULO > 0 so the modulo is well defined.
   def wrap(s: BigInt): BigInt = {
     moduloPos
     ((s % MODULO) + MODULO) % MODULO
   }.ensuring(r => r >= 0 && r < MODULO)
 
+  // Floor division (rounds toward negative infinity), unlike Scala's truncating
+  // `/`. Used where signed semantics need mathematical floor.
   def floorDiv(a: BigInt, b: BigInt): BigInt = {
     require(b > 0)
     val q = a / b
     if (a >= 0 || q * b == a) q else q - 1
   }.ensuring(r => r * b <= a && a < (r + 1) * b)
 
+  // Count-leading-zeros of a width-bit value (the CLZ opcode, EIP-7939). The
+  // postcondition pins the exact result via the bit-position bracketing.
   def clzWidth(v: BigInt, width: BigInt): BigInt = {
     require(v >= 0 && width >= 0 && v < pow(BigInt(2), width))
     decreases(width)
@@ -53,6 +69,9 @@ object EvmMath {
     && v < pow(BigInt(2), width - r)
     && (r < width ==> v >= pow(BigInt(2), width - r - 1)))
 
+  // Inductive lemmas below. Each is a recursive Boolean proof (`.holds`) that the
+  // termination checker validates, invoked as a ghost statement wherever the SMT
+  // solver needs the fact. `@ghost` means they are erased from compiled bytecode.
   @ghost
   def powNonNeg(base: BigInt, exp: BigInt): Boolean = {
     require(base >= 0 && exp >= 0)
@@ -166,6 +185,10 @@ object EvmMath {
     }
   }.holds
 
+  // Nonlinear helpers for the fee arithmetic (gasLimit * price bounds). The solver
+  // handles products poorly, so these package the monotonicity facts. mulLeMono is
+  // monotone in the second factor, mulLeMonoLeft in the first; sumBound turns an
+  // affordability bound (t + v <= balance) into a MAX_VALUE bound on the product t.
   @ghost
   def mulNonNeg(a: BigInt, b: BigInt): Boolean = {
     require(a >= 0 && b >= 0)
