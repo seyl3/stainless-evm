@@ -79,6 +79,26 @@ class PrecompilesSuite extends munit.FunSuite {
   def hex(s: String): SList[BigInt] =
     s.grouped(2).map(h => BigInt(h, 16)).toList.foldRight(SNil[BigInt](): SList[BigInt])((b, acc) => Cons(b, acc))
 
+  test("ecRecover (0x01) recovers the signer address (known vector)") {
+    val input = hex(
+      "456e9aea5e197a1f1af7a3e85a3212fa4049a3ba34c2289b4c860fc0b0c64ef3" +
+      "000000000000000000000000000000000000000000000000000000000000001c" +
+      "9242685bf161793cc25603c231bc2f568eb630ea16aa137d2664ac8038825608" +
+      "4f8ae3bd7535248d0bd448298cc2e2071e56992d0774dc340c368ae950852ada")
+    val out = Precompiles.ecrecover(input)
+    assertEquals(out.size, BigInt(32))
+    assertEquals(toBig(out), BigInt("7156526fbd7a3c72969b54f64e42c10fbb768c8a", 16))
+  }
+
+  test("ecRecover (0x01) returns empty for an out-of-range v") {
+    val input = hex(
+      "456e9aea5e197a1f1af7a3e85a3212fa4049a3ba34c2289b4c860fc0b0c64ef3" +
+      "0000000000000000000000000000000000000000000000000000000000000001" +
+      "9242685bf161793cc25603c231bc2f568eb630ea16aa137d2664ac8038825608" +
+      "4f8ae3bd7535248d0bd448298cc2e2071e56992d0774dc340c368ae950852ada")
+    assertEquals(Precompiles.ecrecover(input).size, BigInt(0))
+  }
+
   test("BLAKE2F (0x09) matches the EIP-152 vector") {
     val input = hex("0000000c" +
       "48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5" +

@@ -5,6 +5,7 @@ import stainless.lang.*
 import stainless.collection.{List => SList, Cons, Nil => SNil}
 import evm.math.Gas
 import evm.math.EvmMath
+import java.math.{BigInteger => JBI}
 
 // The Ethereum precompiled contracts. Pure ones (identity, and MODEXP's arithmetic)
 // are verified; the cryptographic ones follow the trusted-primitive pattern of
@@ -153,6 +154,82 @@ object Precompiles:
     BigInt(b(0) & 0xff) * 16777216 + BigInt(b(1) & 0xff) * 65536 + BigInt(b(2) & 0xff) * 256 + BigInt(b(3) & 0xff)
   }.ensuring(_ >= 0)
 
+  // ecRecover (0x01): recover the signer address of a secp256k1 ECDSA signature.
+  // Input is 128 bytes: hash(32) | v(32) | r(32) | s(32) (v is 27 or 28). Output is
+  // the 20-byte address left-padded to 32 bytes, or empty on failure. BigInteger
+  // supplies the field inverse/exponentiation; the curve point math is hand-rolled
+  // and the address comes from the trusted Keccak256 primitive.
+  @extern
+  def ecrecover(input: SList[BigInt]): SList[BigInt] = {
+    val b = toBytes(input)
+    def rd32(off: Int): Array[Byte] = {
+      val a = new Array[Byte](32); var i = 0
+      while (i < 32) do { if (off + i < b.length) a(i) = b(off + i); i += 1 }; a
+    }
+    def be(off: Int): JBI = new JBI(1, rd32(off))
+    val p = new JBI("fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f", 16)
+    val n = new JBI("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", 16)
+    val gx = new JBI("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798", 16)
+    val gy = new JBI("483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8", 16)
+    val ZERO = JBI.ZERO; val ONE = JBI.ONE; val THREE = JBI.valueOf(3)
+
+    def dbl(pt: Array[JBI]): Array[JBI] =
+      if (pt == null || pt(1).signum == 0) null
+      else {
+        val lam = pt(0).multiply(pt(0)).multiply(THREE).multiply(pt(1).add(pt(1)).modInverse(p)).mod(p)
+        val xr = lam.multiply(lam).subtract(pt(0).add(pt(0))).mod(p)
+        Array(xr, lam.multiply(pt(0).subtract(xr)).subtract(pt(1)).mod(p))
+      }
+    def add(pp: Array[JBI], qq: Array[JBI]): Array[JBI] =
+      if (pp == null) qq else if (qq == null) pp
+      else if (pp(0).equals(qq(0)))
+        (if (pp(1).add(qq(1)).mod(p).signum == 0) null else dbl(pp))
+      else {
+        val lam = qq(1).subtract(pp(1)).multiply(qq(0).subtract(pp(0)).modInverse(p)).mod(p)
+        val xr = lam.multiply(lam).subtract(pp(0)).subtract(qq(0)).mod(p)
+        Array(xr, lam.multiply(pp(0).subtract(xr)).subtract(pp(1)).mod(p))
+      }
+    def mul(k: JBI, pt: Array[JBI]): Array[JBI] = {
+      var res: Array[JBI] = null; var addend = pt; var kk = k
+      while (kk.signum > 0) do { if (kk.testBit(0)) res = add(res, addend); addend = dbl(addend); kk = kk.shiftRight(1) }
+      res
+    }
+
+    val hash = be(0); val v = be(32); val r = be(64); val s = be(96)
+    val recovered: Array[Byte] =
+      if (!(v.equals(JBI.valueOf(27)) || v.equals(JBI.valueOf(28)))
+        || r.compareTo(ONE) < 0 || r.compareTo(n) >= 0 || s.compareTo(ONE) < 0 || s.compareTo(n) >= 0) null
+      else
+        try {
+          val ySq = r.modPow(THREE, p).add(JBI.valueOf(7)).mod(p)
+          val y0 = ySq.modPow(p.add(ONE).shiftRight(2), p)
+          if (!y0.multiply(y0).mod(p).equals(ySq)) null
+          else {
+            val y = if (y0.testBit(0) == v.equals(JBI.valueOf(28))) y0 else p.subtract(y0)
+            val rInv = r.modInverse(n)
+            val u1 = n.subtract(hash.mod(n)).multiply(rInv).mod(n)
+            val u2 = s.multiply(rInv).mod(n)
+            val q = add(mul(u1, Array(gx, gy)), mul(u2, Array(r, y)))
+            if (q == null) null
+            else {
+              def to32(x: JBI): Array[Byte] = {
+                val bs = x.toByteArray
+                val out = new Array[Byte](32)
+                val src = if (bs.length > 32) java.util.Arrays.copyOfRange(bs, bs.length - 32, bs.length) else bs
+                System.arraycopy(src, 0, out, 32 - src.length, src.length); out
+              }
+              val kh = Keccak256.hash(fromBytes(to32(q(0)) ++ to32(q(1))))
+              val addr = kh.value.bigInteger.mod(JBI.TWO.pow(160))
+              val out = new Array[Byte](32)
+              val ab = addr.toByteArray
+              val src = if (ab.length > 32) java.util.Arrays.copyOfRange(ab, ab.length - 32, ab.length) else ab
+              System.arraycopy(src, 0, out, 32 - src.length, src.length); out
+            }
+          }
+        } catch { case _: Throwable => null }
+    if (recovered == null) fromBytes(new Array[Byte](0)) else fromBytes(recovered)
+  }
+
   // P-256 / secp256r1 verify (0x100, EIP-7951, new in Osaka). Input is 160 bytes:
   // msgHash(32) | r(32) | s(32) | qx(32) | qy(32). Output is 32 bytes of value 1 on
   // a valid signature, empty otherwise. Uses the JDK's verified EC implementation.
@@ -221,15 +298,16 @@ object Precompiles:
     if (g < 500) BigInt(500) else g
   }.ensuring(_ >= 500)
 
-  // The implemented precompile addresses: 0x02 SHA-256, 0x03 RIPEMD-160,
-  // 0x04 identity, 0x05 MODEXP, 0x09 BLAKE2F, 0x100 P-256 verify. (0x01 and the
-  // bn254/KZG ones still fall through to the empty-account path.)
+  // The implemented precompile addresses: 0x01 ecRecover, 0x02 SHA-256,
+  // 0x03 RIPEMD-160, 0x04 identity, 0x05 MODEXP, 0x09 BLAKE2F, 0x100 P-256 verify.
+  // (The bn254 and KZG ones still fall through to the empty-account path.)
   def isImplemented(a: BigInt): Boolean =
-    a == 2 || a == 3 || a == 4 || a == 5 || a == 9 || a == 256
+    a == 1 || a == 2 || a == 3 || a == 4 || a == 5 || a == 9 || a == 256
 
   def gasFor(a: BigInt, input: SList[BigInt]): BigInt = {
     require(isImplemented(a) && input.size >= 0)
-    if (a == 2) sha256Gas(input.size)
+    if (a == 1) BigInt(3000) // ecRecover, fixed
+    else if (a == 2) sha256Gas(input.size)
     else if (a == 3) ripemd160Gas(input.size)
     else if (a == 4) identityGas(input.size)
     else if (a == 5) modexpGas(input)
@@ -239,7 +317,8 @@ object Precompiles:
 
   def outputFor(a: BigInt, input: SList[BigInt]): SList[BigInt] = {
     require(isImplemented(a))
-    if (a == 2) sha256(input)
+    if (a == 1) ecrecover(input)
+    else if (a == 2) sha256(input)
     else if (a == 3) ripemd160(input)
     else if (a == 4) identity(input)
     else if (a == 5) modexp(input)
