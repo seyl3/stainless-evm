@@ -5,14 +5,18 @@ import stainless.lang.*
 import evm.value.Word256
 import evm.math.Bytes
 import evm.math.EvmMath
+import evm.math.Gas
+import evm.code.Code
 import evm.state.Storage
-import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState, Log}
+import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState, Log, CreateAddress}
 
 // An EIP-2930 access-list entry: an address plus the storage keys pre-warmed for it.
 case class AccessListEntry(address: Address, keys: List[Word256])
 
 // A transaction to execute: sender, recipient, value, gas limit, the EIP-1559 fee
-// caps, nonce, calldata, and an optional EIP-2930 access list.
+// caps, nonce, calldata, an optional EIP-2930 access list, and a create flag. When
+// create is set the tx has no real recipient: `data` is the initcode and the
+// contract is deployed at keccak(rlp(origin, nonce))[12:] (`to` is ignored).
 case class Transaction(
   origin: Address,
   to: Address,
@@ -22,7 +26,8 @@ case class Transaction(
   maxPriorityFeePerGas: Word256,
   nonce: BigInt,
   data: List[BigInt],
-  accessList: List[AccessListEntry]
+  accessList: List[AccessListEntry],
+  create: Boolean
 ):
   require(gasLimit >= 0 && nonce >= 0)
 
@@ -111,7 +116,7 @@ object Transaction:
   // (or roll back to worldOnFail), refund the unused gas in wei to the sender, and
   // pay the priority tip to the coinbase.
   def settle(tx: Transaction, floor: BigInt, price: Word256, baseFee: Word256,
-             coinbase: Address, worldOnFail: WorldState, fin: ExecState): TxResult = {
+             coinbase: Address, commitAddr: Address, worldOnFail: WorldState, fin: ExecState): TxResult = {
     require(0 <= floor && floor <= tx.gasLimit
       && baseFee.value <= price.value
       && tx.gasLimit * price.value <= EvmMath.MAX_VALUE)
@@ -137,7 +142,7 @@ object Transaction:
     val weiRefund = Word256(unused * price.value)
     val tip = Word256(gasUsed * prio)
     val committed =
-      if (success) fin.world.withStorage(tx.to, fin.storage) else worldOnFail
+      if (success) fin.world.withStorage(commitAddr, fin.storage) else worldOnFail
     val w1 = committed.withBalance(tx.origin, committed.balanceOf(tx.origin) + weiRefund)
     val w2 = w1.withBalance(coinbase, w1.balanceOf(coinbase) + tip)
     if (success) TxResult(Status.Halted, gasUsed, refund, fin.logs, fin.returnData, w2)
@@ -145,12 +150,28 @@ object Transaction:
     else TxResult(fin.status, gasUsed, BigInt(0), Nil(), Nil(), w2)
   }.ensuring(r => floor <= r.gasUsed && r.gasUsed <= tx.gasLimit && r.gasRefunded >= 0)
 
+  // Deploy the result of a creation-tx initcode frame: on success charge 200 per
+  // returned byte (capped by EIP-170 at 24576) from the leftover gas and install
+  // the code at the new address; if the code is too big or the gas is short, the
+  // creation fails and all gas is consumed.
+  def deployCreation(fin: ExecState, newAddr: Address): ExecState = {
+    if (fin.status != Status.Halted) fin
+    else {
+      val code = fin.returnData
+      val depCost = 200 * code.size
+      if (code.size > 24576 || fin.gas < depCost) fin.fail
+      else fin.copy(gas = fin.gas - depCost, world = fin.world.withCode(newAddr, Code(code)))
+    }
+  }
+
   // The charge-execute-settle body, run only once the tx is known valid. Debits
-  // gasLimit*price upfront and bumps the nonce, transfers the call value, warms the
-  // origin/recipient/coinbase and precompiles, runs the frame, then settles.
+  // gasLimit*price upfront and bumps the nonce, transfers the value, warms the
+  // origin/target/coinbase and precompiles plus the access list, runs the frame
+  // (the recipient's code, or the initcode for a creation), deploys the code for a
+  // creation, then settles. The target is the recipient or the derived new address.
   def execTx(tx: Transaction, block: BlockContext, world: WorldState,
              intrinsic: BigInt, floor: BigInt): TxResult = {
-    require(0 <= intrinsic && intrinsic <= floor && floor <= tx.gasLimit
+    require(0 <= intrinsic && intrinsic <= tx.gasLimit && 0 <= floor && floor <= tx.gasLimit
       && block.baseFee.value <= tx.maxFeePerGas.value
       && tx.maxPriorityFeePerGas.value <= tx.maxFeePerGas.value
       && world.balanceOf(tx.origin).value >= tx.gasLimit * tx.maxFeePerGas.value + tx.value.value)
@@ -165,21 +186,26 @@ object Transaction:
     senderBal.bounded
     assert(upfront + tx.value.value <= senderBal.value)
     EvmMath.sumBound(upfront, tx.value.value, senderBal.value)
+    val target = if (tx.create) CreateAddress.create(tx.origin, tx.nonce) else tx.to
     val w1 = world.withNonce(tx.origin, tx.nonce + 1)
       .withBalance(tx.origin, Word256(senderBal.value - upfront))
-    val w2 = w1.transfer(tx.origin, tx.to, tx.value)
+    val w2 = w1.transfer(tx.origin, target, tx.value)
     val execGas = tx.gasLimit - intrinsic
     val txctx = TxContext(tx.origin, price)
-    val msg = MessageContext(tx.to, tx.origin, tx.value, tx.data)
-    val s = w2.storageOf(tx.to)
-    val init = ExecState.initialWith(w2.codeOf(tx.to), execGas, block, txctx, msg, w2)
-      .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase) ++ accessListAddrs(tx.accessList),
+    val frameCode = if (tx.create) Code(tx.data) else w2.codeOf(target)
+    val callData = if (tx.create) Nil[BigInt]() else tx.data
+    val msg = MessageContext(target, tx.origin, tx.value, callData)
+    val s = w2.storageOf(target)
+    val init = ExecState.initialWith(frameCode, execGas, block, txctx, msg, w2)
+      .copy(accessedAccounts = precompiles ++ Set(tx.origin, target, block.coinbase) ++ accessListAddrs(tx.accessList),
             accessedSlots = accessListKeys(tx.accessList),
-            storage = s, original = s)
-    // settle commits onto the post-execution world (fin.world), which already
-    // holds any nested-call state changes; w1 is the pre-execution world to roll
-    // back to on revert/failure (value transfer undone, gas still paid).
-    settle(tx, floor, price, block.baseFee, block.coinbase, w1, Interpreter.run(init))
+            storage = s, original = s,
+            created = if (tx.create) Set(target) else Set.empty[Address])
+    val fin0 = Interpreter.run(init)
+    val fin = if (tx.create) deployCreation(fin0, target) else fin0
+    // settle commits onto fin.world (already holding nested-call and deployment
+    // changes); w1 is the pre-execution world to roll back to on revert/failure.
+    settle(tx, floor, price, block.baseFee, block.coinbase, target, w1, fin)
   }.ensuring(r => 0 <= r.gasUsed && r.gasUsed <= tx.gasLimit && r.gasRefunded >= 0)
 
   // Top-level entry. Rejects a tx below the gas floor (billing its whole limit) or
@@ -191,9 +217,13 @@ object Transaction:
   def run(tx: Transaction, block: BlockContext, world: WorldState): TxResult = {
     val t = tokens(tx.data)
     val alCost = accessListCost(tx.accessList)
-    val intrinsic = BigInt(21000) + 4 * t + alCost
+    // Creation txs cost 53000 base plus the EIP-3860 initcode word cost (2/word).
+    val base = if (tx.create) BigInt(53000) else BigInt(21000)
+    val initCost = if (tx.create) 2 * Gas.words(tx.data.size) else BigInt(0)
+    val intrinsic = base + 4 * t + initCost + alCost
     val floor = BigInt(21000) + 10 * t + alCost
-    if (tx.gasLimit < floor)
+    val minGas = if (intrinsic > floor) intrinsic else floor
+    if (tx.gasLimit < minGas)
       TxResult(Status.Failed, tx.gasLimit, BigInt(0), Nil(), Nil(), world)
     else if (tx.gasLimit > GAS_LIMIT_CAP // EIP-7825
       || block.baseFee.value > tx.maxFeePerGas.value
