@@ -21,7 +21,7 @@ class TransactionSuite extends munit.FunSuite {
   val sender: Address = Address(BigInt(1))
 
   def tx(gasLimit: BigInt, data: List[BigInt] = Nil(), nonce: BigInt = 0): Transaction =
-    Transaction(sender, to, Word256.Zero, gasLimit, Word256.Zero, Word256.Zero, nonce, data)
+    Transaction(sender, to, Word256.Zero, gasLimit, Word256.Zero, Word256.Zero, nonce, data, Nil())
 
   test("a simple transaction runs the recipient code and bills intrinsic plus execution gas") {
     val res = Transaction.run(tx(30000), BlockContext.empty, worldWith(code(0x60, 0x01, 0x00)))
@@ -262,7 +262,7 @@ class TransactionSuite extends munit.FunSuite {
     val world = WorldState(stainless.lang.Map(
       sender -> Account(Word256(BigInt(100)), Code.empty),
       to -> Account(Word256.Zero, code(0x00))))
-    val t = Transaction(sender, to, Word256(BigInt(10)), 30000, Word256.Zero, Word256.Zero, 0, Nil())
+    val t = Transaction(sender, to, Word256(BigInt(10)), 30000, Word256.Zero, Word256.Zero, 0, Nil(), Nil())
     val res = Transaction.run(t, BlockContext.empty, world)
     assertEquals(res.status, Status.Halted)
     assertEquals(res.world.balanceOf(sender).value, BigInt(90))
@@ -274,7 +274,7 @@ class TransactionSuite extends munit.FunSuite {
     val world = WorldState(stainless.lang.Map(
       sender -> Account(Word256(BigInt(100)), Code.empty),
       to -> Account(Word256.Zero, code(0x00))))
-    val t = Transaction(sender, to, Word256(BigInt(200)), 30000, Word256.Zero, Word256.Zero, 0, Nil())
+    val t = Transaction(sender, to, Word256(BigInt(200)), 30000, Word256.Zero, Word256.Zero, 0, Nil(), Nil())
     val res = Transaction.run(t, BlockContext.empty, world)
     assertEquals(res.status, Status.Failed)
     assertEquals(res.gasUsed, BigInt(0))
@@ -296,7 +296,7 @@ class TransactionSuite extends munit.FunSuite {
       sender -> Account(Word256(BigInt(100000)), Code.empty),
       to -> Account(Word256.Zero, code(0x00))))
     val t = Transaction(sender, to, Word256.Zero, 30000,
-      Word256(BigInt(3)), Word256(BigInt(1)), 0, Nil())
+      Word256(BigInt(3)), Word256(BigInt(1)), 0, Nil(), Nil())
     val res = Transaction.run(t, block, world)
     assertEquals(res.status, Status.Halted)
     assertEquals(res.gasUsed, BigInt(21000))
@@ -311,7 +311,7 @@ class TransactionSuite extends munit.FunSuite {
       sender -> Account(Word256(BigInt(1000000)), Code.empty),
       to -> Account(Word256.Zero, code(0x00))))
     val t = Transaction(sender, to, Word256.Zero, 30000,
-      Word256(BigInt(3)), Word256.Zero, 0, Nil())
+      Word256(BigInt(3)), Word256.Zero, 0, Nil(), Nil())
     val res = Transaction.run(t, block, world)
     assertEquals(res.status, Status.Failed)
     assertEquals(res.gasUsed, BigInt(0))
@@ -321,7 +321,7 @@ class TransactionSuite extends munit.FunSuite {
     val world = WorldState(stainless.lang.Map(
       sender -> Account(Word256(BigInt(100)), Code.empty),
       to -> Account(Word256.Zero, code(0x60, 0x00, 0x60, 0x00, 0xFD))))
-    val t = Transaction(sender, to, Word256(BigInt(10)), 30000, Word256.Zero, Word256.Zero, 0, Nil())
+    val t = Transaction(sender, to, Word256(BigInt(10)), 30000, Word256.Zero, Word256.Zero, 0, Nil(), Nil())
     val res = Transaction.run(t, BlockContext.empty, world)
     assertEquals(res.status, Status.Reverted)
     assertEquals(res.world.balanceOf(sender).value, BigInt(100))
@@ -337,7 +337,7 @@ class TransactionSuite extends munit.FunSuite {
       sender -> Account(Word256(BigInt(1000000)), Code.empty),
       to -> Account(Word256.Zero, program)))
     val t = Transaction(sender, to, Word256.Zero, 100000,
-      Word256(BigInt(3)), Word256(BigInt(1)), 0, Nil())
+      Word256(BigInt(3)), Word256(BigInt(1)), 0, Nil(), Nil())
     val res = Transaction.run(t, block, world)
     assertEquals(res.status, Status.Halted)
     val v = res.returnData.foldLeft(BigInt(0))((acc, b) => (acc << 8) | b)
@@ -348,7 +348,7 @@ class TransactionSuite extends munit.FunSuite {
     val data: List[BigInt] = Cons(BigInt(0xFF), Cons(BigInt(0xFF), Nil()))
     // tokens = 8; floor = 21000 + 80 = 21080; standard intrinsic = 21000 + 32 = 21032; STOP adds 0
     val res = Transaction.run(
-      Transaction(sender, to, Word256.Zero, 30000, Word256.Zero, Word256.Zero, 0, data),
+      Transaction(sender, to, Word256.Zero, 30000, Word256.Zero, Word256.Zero, 0, data, Nil()),
       BlockContext.empty, worldWith(code(0x00)))
     assertEquals(res.status, Status.Halted)
     assertEquals(res.gasUsed, BigInt(21080))
@@ -459,5 +459,33 @@ class TransactionSuite extends munit.FunSuite {
     val res = Transaction.run(tx(200000), BlockContext.empty, world)
     assertEquals(res.status, Status.Halted)
     assertEquals(res.returnData.head, BigInt(0)) // STATICCALL failed
+  }
+
+  test("EIP-2930: an access list pre-warms an account so BALANCE is warm-priced") {
+    // PUSH2 0x0099, BALANCE, STOP; the access list names 0x99, so BALANCE costs 100 not 2600
+    val program = code(0x61, 0x00, 0x99, 0x31, 0x00)
+    val al: List[AccessListEntry] = Cons(AccessListEntry(Address(BigInt(0x99)), Nil()), Nil())
+    val t = Transaction(sender, to, Word256.Zero, 100000, Word256.Zero, Word256.Zero, 0, Nil(), al)
+    val res = Transaction.run(t, BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    // 21000 intrinsic + 2400 access-list address + 3 (PUSH2) + 100 (warm BALANCE)
+    assertEquals(res.gasUsed, BigInt(23503))
+  }
+
+  test("EIP-2930: the access list is charged 2400 per address and 1900 per key") {
+    val al: List[AccessListEntry] = Cons(
+      AccessListEntry(Address(BigInt(0x99)), Cons(Word256(BigInt(1)), Cons(Word256(BigInt(2)), Nil()))), Nil())
+    val t = Transaction(sender, to, Word256.Zero, 100000, Word256.Zero, Word256.Zero, 0, Nil(), al)
+    val res = Transaction.run(t, BlockContext.empty, worldWith(code(0x00)))
+    assertEquals(res.status, Status.Halted)
+    // 21000 + 2400 (one address) + 2*1900 (two keys)
+    assertEquals(res.gasUsed, BigInt(27200))
+  }
+
+  test("EIP-7825: a transaction above the 2^24 gas cap is invalid") {
+    val t = Transaction(sender, to, Word256.Zero, 16777217, Word256.Zero, Word256.Zero, 0, Nil(), Nil())
+    val res = Transaction.run(t, BlockContext.empty, worldWith(code(0x00)))
+    assertEquals(res.status, Status.Failed)
+    assertEquals(res.gasUsed, BigInt(0))
   }
 }

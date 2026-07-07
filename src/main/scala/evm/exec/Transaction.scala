@@ -8,8 +8,11 @@ import evm.math.EvmMath
 import evm.state.Storage
 import evm.env.{Address, BlockContext, TxContext, MessageContext, WorldState, Log}
 
+// An EIP-2930 access-list entry: an address plus the storage keys pre-warmed for it.
+case class AccessListEntry(address: Address, keys: List[Word256])
+
 // A transaction to execute: sender, recipient, value, gas limit, the EIP-1559 fee
-// caps, nonce, and calldata.
+// caps, nonce, calldata, and an optional EIP-2930 access list.
 case class Transaction(
   origin: Address,
   to: Address,
@@ -18,7 +21,8 @@ case class Transaction(
   maxFeePerGas: Word256,
   maxPriorityFeePerGas: Word256,
   nonce: BigInt,
-  data: List[BigInt]
+  data: List[BigInt],
+  accessList: List[AccessListEntry]
 ):
   require(gasLimit >= 0 && nonce >= 0)
 
@@ -60,6 +64,38 @@ object Transaction:
   def floorGas(data: List[BigInt]): BigInt = {
     BigInt(21000) + 10 * tokens(data)
   }.ensuring(r => r >= 21000)
+
+  // EIP-2930 access-list intrinsic cost: 2400 per address + 1900 per storage key.
+  def accessListCost(al: List[AccessListEntry]): BigInt = {
+    decreases(al)
+    al match
+      case Nil() => BigInt(0)
+      case Cons(e, t) => BigInt(2400) + 1900 * e.keys.size + accessListCost(t)
+  }.ensuring(r => r >= 0)
+
+  // The addresses named in the access list, to pre-warm.
+  def accessListAddrs(al: List[AccessListEntry]): Set[Address] = {
+    decreases(al)
+    al match
+      case Nil() => Set.empty[Address]
+      case Cons(e, t) => accessListAddrs(t) ++ Set(e.address)
+  }
+
+  def keysToSet(ks: List[Word256]): Set[Word256] = {
+    decreases(ks)
+    ks match
+      case Nil() => Set.empty[Word256]
+      case Cons(k, t) => keysToSet(t) ++ Set(k)
+  }
+
+  // Every storage key named in the access list (our accessed-slot set is global,
+  // not keyed by address, so all listed keys are warmed).
+  def accessListKeys(al: List[AccessListEntry]): Set[Word256] = {
+    decreases(al)
+    al match
+      case Nil() => Set.empty[Word256]
+      case Cons(e, t) => accessListKeys(t) ++ keysToSet(e.keys)
+  }
 
   // EIP-1559 per-gas price actually charged: base fee plus the priority tip,
   // where the tip is capped at maxFee - baseFee. Proven to lie in [baseFee, maxFee].
@@ -137,7 +173,8 @@ object Transaction:
     val msg = MessageContext(tx.to, tx.origin, tx.value, tx.data)
     val s = w2.storageOf(tx.to)
     val init = ExecState.initialWith(w2.codeOf(tx.to), execGas, block, txctx, msg, w2)
-      .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase),
+      .copy(accessedAccounts = precompiles ++ Set(tx.origin, tx.to, block.coinbase) ++ accessListAddrs(tx.accessList),
+            accessedSlots = accessListKeys(tx.accessList),
             storage = s, original = s)
     // settle commits onto the post-execution world (fin.world), which already
     // holds any nested-call state changes; w1 is the pre-execution world to roll
@@ -148,13 +185,18 @@ object Transaction:
   // Top-level entry. Rejects a tx below the gas floor (billing its whole limit) or
   // one that is otherwise invalid (fee caps inconsistent, wrong nonce, or the
   // sender cannot cover gasLimit*maxFee + value) without charging it, then runs it.
+  // EIP-7825 transaction gas-limit cap: 2^24.
+  val GAS_LIMIT_CAP: BigInt = 16777216
+
   def run(tx: Transaction, block: BlockContext, world: WorldState): TxResult = {
     val t = tokens(tx.data)
-    val intrinsic = BigInt(21000) + 4 * t
-    val floor = BigInt(21000) + 10 * t
+    val alCost = accessListCost(tx.accessList)
+    val intrinsic = BigInt(21000) + 4 * t + alCost
+    val floor = BigInt(21000) + 10 * t + alCost
     if (tx.gasLimit < floor)
       TxResult(Status.Failed, tx.gasLimit, BigInt(0), Nil(), Nil(), world)
-    else if (block.baseFee.value > tx.maxFeePerGas.value
+    else if (tx.gasLimit > GAS_LIMIT_CAP // EIP-7825
+      || block.baseFee.value > tx.maxFeePerGas.value
       || tx.maxPriorityFeePerGas.value > tx.maxFeePerGas.value
       || tx.nonce != world.nonceOf(tx.origin)
       || world.balanceOf(tx.origin).value < tx.gasLimit * tx.maxFeePerGas.value + tx.value.value)
