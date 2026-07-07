@@ -4,6 +4,7 @@ import stainless.lang.*
 import stainless.collection.*
 import evm.value.Word256
 import evm.value.Keccak256
+import evm.value.Precompiles
 import evm.math.Gas
 import evm.math.EvmMath
 import evm.math.EvmMath.MAX_VALUE
@@ -862,6 +863,24 @@ object Interpreter:
     if (argsEnd > retEnd) argsEnd else retEnd
   }.ensuring(r => r >= 0)
 
+  // A call to an implemented precompile: compute its output and gas directly (no
+  // child frame). On success charge the precompile cost out of the forwarded gas g
+  // (refunding the rest), write the output into the caller's retOffset memory, and
+  // push 1; if g cannot cover the cost, consume g and push 0.
+  def precompileReject(s1: ExecState, rest: Stack, g: BigInt, callee: Address,
+                       input: List[BigInt], retOff: BigInt, retLen: BigInt): ExecState = {
+    require(s1.isRunning && 0 <= g && g <= s1.gas && 0 <= retOff && 0 <= retLen
+      && rest.data.size < Stack.MAXIMUM_STACK_SIZE && Precompiles.isImplemented(callee.value))
+    val pcGas = Precompiles.gasFor(callee.value, input)
+    if (g >= pcGas) {
+      val output = Precompiles.outputFor(callee.value, input)
+      val writeLen = if (retLen < output.size) retLen else output.size
+      s1.copy(gas = s1.gas - pcGas, stack = rest.push(Word256.One), returnData = output,
+        memory = s1.memory.copyIn(retOff, output, 0, writeLen)).advancePc(1)
+    } else
+      s1.copy(gas = s1.gas - g, stack = rest.push(Word256.Zero)).advancePc(1)
+  }.ensuring(r => r.isRunning && r.gas <= s1.gas)
+
   // Pop the 6 STATICCALL args, charge the base cost, and either reject the call
   // (continue the parent) or build the child frame and the gas-forwarded parent.
   def prepareStaticCall(s: ExecState): CallPrep = {
@@ -891,13 +910,17 @@ object Interpreter:
           val g = if (gasReq.value < avail) gasReq.value else avail
           argsLen.bounded
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
-          val calleeStorage = s1.world.storageOf(callee)
-          val child = ExecState.subFrame(s1.world.codeOf(callee), callee, s1.msg.self, Word256.Zero,
-            callData, g, s1.depth + 1, true, s1.block, s1.tx, s1.world, calleeStorage, calleeStorage,
-            s1.accessedAccounts, s1.created)
           retOff.bounded
           retLen.bounded
-          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, false, false, callee, s.world, retOff.value, retLen.value)
+          if (Precompiles.isImplemented(callee.value))
+            CallReject(precompileReject(s1, rest, g, callee, callData, retOff.value, retLen.value))
+          else {
+            val calleeStorage = s1.world.storageOf(callee)
+            val child = ExecState.subFrame(s1.world.codeOf(callee), callee, s1.msg.self, Word256.Zero,
+              callData, g, s1.depth + 1, true, s1.block, s1.tx, s1.world, calleeStorage, calleeStorage,
+              s1.accessedAccounts, s1.created)
+            CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, false, false, callee, s.world, retOff.value, retLen.value)
+          }
         }
       }
     }
@@ -979,12 +1002,16 @@ object Interpreter:
           argsLen.bounded
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
           val transferred = s1.world.transfer(s1.msg.self, callee, value)
-          val child = ExecState.subFrame(transferred.codeOf(callee), callee, s1.msg.self, value,
-            callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, transferred,
-            transferred.storageOf(callee), transferred.storageOf(callee), s1.accessedAccounts, s1.created)
           retOff.bounded
           retLen.bounded
-          CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, false, callee, s.world, retOff.value, retLen.value)
+          if (Precompiles.isImplemented(callee.value))
+            CallReject(precompileReject(s1.copy(world = transferred), rest, baseFwd, callee, callData, retOff.value, retLen.value))
+          else {
+            val child = ExecState.subFrame(transferred.codeOf(callee), callee, s1.msg.self, value,
+              callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, transferred,
+              transferred.storageOf(callee), transferred.storageOf(callee), s1.accessedAccounts, s1.created)
+            CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, false, callee, s.world, retOff.value, retLen.value)
+          }
         }
       }
     }

@@ -94,6 +94,47 @@ object Precompiles:
     BigInt(600) + 120 * Gas.words(len)
   }.ensuring(_ >= 600)
 
+  // MODEXP gas (EIP-2565 shape with the EIP-7883 minimum of 500). Trusted parsing.
+  @extern @pure
+  def modexpGas(input: SList[BigInt]): BigInt = {
+    val b = toBytes(input)
+    def rd(off: Int, n: Int): BigInt = {
+      var v = BigInt(0); var i = 0
+      while (i < n) do { v = (v << 8) | BigInt(if (off + i < b.length) (b(off + i) & 0xff) else 0); i += 1 }
+      v
+    }
+    val baseLen = rd(0, 32); val expLen = rd(32, 32); val modLen = rd(64, 32)
+    val maxLen = if (baseLen > modLen) baseLen else modLen
+    val words = (maxLen + 7) / 8
+    val mult = words * words
+    val expHead = rd(96 + baseLen.toInt, if (expLen < 32) expLen.toInt else 32)
+    val headBits = if (expHead <= 0) BigInt(0) else BigInt(expHead.bitLength - 1)
+    val iter0 = if (expLen <= 32) headBits else 8 * (expLen - 32) + headBits
+    val iter = if (iter0 < 1) BigInt(1) else iter0
+    val g = mult * iter / 3
+    if (g < 500) BigInt(500) else g
+  }.ensuring(_ >= 500)
+
+  // The implemented precompile addresses: 0x02 SHA-256, 0x03 RIPEMD-160,
+  // 0x04 identity, 0x05 MODEXP. (0x01 and 0x06.. still fall through to empty.)
+  def isImplemented(a: BigInt): Boolean = a == 2 || a == 3 || a == 4 || a == 5
+
+  def gasFor(a: BigInt, input: SList[BigInt]): BigInt = {
+    require(isImplemented(a) && input.size >= 0)
+    if (a == 2) sha256Gas(input.size)
+    else if (a == 3) ripemd160Gas(input.size)
+    else if (a == 4) identityGas(input.size)
+    else modexpGas(input)
+  }.ensuring(_ >= 0)
+
+  def outputFor(a: BigInt, input: SList[BigInt]): SList[BigInt] = {
+    require(isImplemented(a))
+    if (a == 2) sha256(input)
+    else if (a == 3) ripemd160(input)
+    else if (a == 4) identity(input)
+    else modexp(input)
+  }
+
   // --- trusted byte plumbing (ignored by the verifier) ---
 
   @extern @pure

@@ -504,6 +504,28 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.returnData.head, BigInt(0x42))
   }
 
+  test("STATICCALL to the SHA-256 precompile (0x02) returns the hash") {
+    // STATICCALL(gas=0xFFFF, 0x02, argsOff=0, argsLen=0, retOff=0, retLen=32), then RETURN [0,32]
+    val program = code(
+      0x60, 0x20, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x02, 0x61, 0xFF, 0xFF, 0xFA,
+      0x50, 0x60, 0x20, 0x60, 0x00, 0xF3)
+    val res = Transaction.run(tx(200000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    val v = res.returnData.foldLeft(BigInt(0))((acc, b) => (acc << 8) | b)
+    assertEquals(v, BigInt("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 16))
+  }
+
+  test("CALL to the identity precompile (0x04) echoes the input into retOffset memory") {
+    // MSTORE8 0xAB at 0, CALL(0x04, args=[0,1], ret=[1,1]), RETURN mem[1:2]
+    val program = code(
+      0x60, 0xAB, 0x60, 0x00, 0x53,
+      0x60, 0x01, 0x60, 0x01, 0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0x60, 0x04, 0x61, 0xFF, 0xFF, 0xF1,
+      0x50, 0x60, 0x01, 0x60, 0x01, 0xF3)
+    val res = Transaction.run(tx(200000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData.head, BigInt(0xAB))
+  }
+
   test("a creation transaction deploys a contract at the derived address") {
     // initcode PUSH1 1, PUSH1 0, RETURN returns mem[0:1] = 0x00, a 1-byte STOP
     val initcode = code(0x60, 0x01, 0x60, 0x00, 0xF3).code
