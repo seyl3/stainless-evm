@@ -93,6 +93,35 @@ class PrecompilesSuite extends munit.FunSuite {
       "7d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923", 16))
   }
 
+  test("P-256 verify (0x100) accepts a valid signature and rejects a tampered one") {
+    val kpg = java.security.KeyPairGenerator.getInstance("EC")
+    kpg.initialize(new java.security.spec.ECGenParameterSpec("secp256r1"))
+    val kp = kpg.generateKeyPair()
+    val hash = Array.tabulate(32)(i => (i * 7 + 1).toByte)
+    val signer = java.security.Signature.getInstance("NONEwithECDSA")
+    signer.initSign(kp.getPrivate)
+    signer.update(hash)
+    val der = signer.sign()
+    val rlen = der(3).toInt
+    val r = new java.math.BigInteger(1, java.util.Arrays.copyOfRange(der, 4, 4 + rlen))
+    val soff = 4 + rlen
+    val slen = der(soff + 1).toInt
+    val s = new java.math.BigInteger(1, java.util.Arrays.copyOfRange(der, soff + 2, soff + 2 + slen))
+    val pub = kp.getPublic.asInstanceOf[java.security.interfaces.ECPublicKey]
+    def to32(v: java.math.BigInteger): Array[Byte] = {
+      val bs = v.toByteArray
+      val src = if (bs.length > 32) bs.takeRight(32) else bs
+      val out = new Array[Byte](32); System.arraycopy(src, 0, out, 32 - src.length, src.length); out
+    }
+    def slb(a: Array[Byte]): SList[BigInt] =
+      a.foldRight(SNil[BigInt](): SList[BigInt])((x, acc) => Cons(BigInt(x & 0xff), acc))
+    val input = hash ++ to32(r) ++ to32(s) ++ to32(pub.getW.getAffineX) ++ to32(pub.getW.getAffineY)
+    assertEquals(input.length, 160)
+    assertEquals(toBig(Precompiles.p256Verify(slb(input))), BigInt(1))
+    val bad = input.clone(); bad(0) = (bad(0) ^ 0xFF).toByte
+    assertEquals(Precompiles.p256Verify(slb(bad)).size, BigInt(0))
+  }
+
   test("precompile gas costs") {
     assertEquals(Precompiles.identityGas(0), BigInt(15))
     assertEquals(Precompiles.identityGas(32), BigInt(18))

@@ -153,6 +153,37 @@ object Precompiles:
     BigInt(b(0) & 0xff) * 16777216 + BigInt(b(1) & 0xff) * 65536 + BigInt(b(2) & 0xff) * 256 + BigInt(b(3) & 0xff)
   }.ensuring(_ >= 0)
 
+  // P-256 / secp256r1 verify (0x100, EIP-7951, new in Osaka). Input is 160 bytes:
+  // msgHash(32) | r(32) | s(32) | qx(32) | qy(32). Output is 32 bytes of value 1 on
+  // a valid signature, empty otherwise. Uses the JDK's verified EC implementation.
+  @extern
+  def p256Verify(input: SList[BigInt]): SList[BigInt] = {
+    val b = toBytes(input)
+    val ok =
+      if (b.length != 160) false
+      else
+        try {
+          def be(off: Int): java.math.BigInteger =
+            new java.math.BigInteger(1, java.util.Arrays.copyOfRange(b, off, off + 32))
+          val hash = java.util.Arrays.copyOfRange(b, 0, 32)
+          val r = be(32); val s = be(64); val x = be(96); val y = be(128)
+          val params = java.security.AlgorithmParameters.getInstance("EC")
+          params.init(new java.security.spec.ECGenParameterSpec("secp256r1"))
+          val ecSpec = params.getParameterSpec(classOf[java.security.spec.ECParameterSpec])
+          val pub = java.security.KeyFactory.getInstance("EC").generatePublic(
+            new java.security.spec.ECPublicKeySpec(new java.security.spec.ECPoint(x, y), ecSpec))
+          val rb = r.toByteArray; val sb = s.toByteArray
+          val body = (Array(0x02.toByte, rb.length.toByte) ++ rb) ++ (Array(0x02.toByte, sb.length.toByte) ++ sb)
+          val der = Array(0x30.toByte, body.length.toByte) ++ body
+          val sig = java.security.Signature.getInstance("NONEwithECDSA")
+          sig.initVerify(pub)
+          sig.update(hash)
+          sig.verify(der)
+        } catch { case _: Throwable => false }
+    if (ok) { val out = new Array[Byte](32); out(31) = 1; fromBytes(out) }
+    else fromBytes(new Array[Byte](0))
+  }
+
   // Gas: static base + per-word cost. words(len) = ceil(len/32).
   def identityGas(len: BigInt): BigInt = {
     require(len >= 0)
@@ -191,9 +222,10 @@ object Precompiles:
   }.ensuring(_ >= 500)
 
   // The implemented precompile addresses: 0x02 SHA-256, 0x03 RIPEMD-160,
-  // 0x04 identity, 0x05 MODEXP, 0x09 BLAKE2F. (0x01 and the EC ones still fall
-  // through to the empty-account path.)
-  def isImplemented(a: BigInt): Boolean = a == 2 || a == 3 || a == 4 || a == 5 || a == 9
+  // 0x04 identity, 0x05 MODEXP, 0x09 BLAKE2F, 0x100 P-256 verify. (0x01 and the
+  // bn254/KZG ones still fall through to the empty-account path.)
+  def isImplemented(a: BigInt): Boolean =
+    a == 2 || a == 3 || a == 4 || a == 5 || a == 9 || a == 256
 
   def gasFor(a: BigInt, input: SList[BigInt]): BigInt = {
     require(isImplemented(a) && input.size >= 0)
@@ -201,7 +233,8 @@ object Precompiles:
     else if (a == 3) ripemd160Gas(input.size)
     else if (a == 4) identityGas(input.size)
     else if (a == 5) modexpGas(input)
-    else blake2fGas(input)
+    else if (a == 9) blake2fGas(input)
+    else BigInt(6900) // P-256 verify, fixed (EIP-7951)
   }.ensuring(_ >= 0)
 
   def outputFor(a: BigInt, input: SList[BigInt]): SList[BigInt] = {
@@ -210,7 +243,8 @@ object Precompiles:
     else if (a == 3) ripemd160(input)
     else if (a == 4) identity(input)
     else if (a == 5) modexp(input)
-    else blake2f(input)
+    else if (a == 9) blake2f(input)
+    else p256Verify(input)
   }
 
   // --- trusted byte plumbing (ignored by the verifier) ---
