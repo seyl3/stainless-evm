@@ -64,6 +64,32 @@ logs:      0
 `--gas` sets the gas limit (default 1,000,000), `--calldata` supplies input bytes
 (hex), and `--value` sets the call value in wei.
 
+The `tx` command runs a full transaction through `Transaction.run`: it deploys the
+given code at the recipient, funds the sender, and applies the whole intrinsic gas,
+EIP-1559 fee, nonce, value-transfer, and settlement path. It prints the settlement
+and the before/after balances and nonces.
+
+```
+sbt "cli/run tx 00 --value 100 --maxfee 10 --priorityfee 2 --basefee 5 --gas 30000"
+```
+```
+status:       Halted
+gas used:     21000
+gas refunded: 0
+return:       0x (empty)
+logs:         0
+
+sender    0x0000000000000000000000000000000000000001  balance 1000000000000000000 -> 999999999999852900  nonce 0 -> 1
+recipient 0x0000000000000000000000000000000000001000  balance 0 -> 100
+coinbase  0x0000000000000000000000000000000000002000  balance 0 -> 42000
+```
+
+Here the sender pays `21000 * 7 + 100` (gas at the effective price of 7 plus the
+value), the recipient receives the value, and the coinbase receives the priority
+tip of `21000 * 2`. Flags: `--from`/`--to`/`--coinbase` (hex addresses),
+`--balance` (sender funds, default 1e18), and `--maxfee`/`--priorityfee`/`--basefee`
+/`--nonce`. With the fee flags left at their zero defaults, gas is free.
+
 The `disasm` command prints bytecode as opcodes with their offsets and immediates:
 
 ```
