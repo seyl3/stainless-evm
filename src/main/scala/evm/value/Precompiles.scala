@@ -78,6 +78,81 @@ object Precompiles:
     fromBytes(out)
   }
 
+  // BLAKE2F (0x09): the BLAKE2b compression function F (EIP-152). Input is 213
+  // bytes: rounds (4, big-endian) | h (64) | m (128) | t (16) | f (1), all the
+  // 8-byte words little-endian. Output is the 64-byte state h'. Reference algorithm.
+  @extern
+  def blake2f(input: SList[BigInt]): SList[BigInt] = {
+    val b = toBytes(input)
+    def le64(off: Int): Long = {
+      var v = 0L; var i = 0
+      while (i < 8) do { v |= (b(off + i).toLong & 0xffL) << (8 * i); i += 1 }
+      v
+    }
+    val rounds = ((b(0) & 0xffL) << 24) | ((b(1) & 0xffL) << 16) | ((b(2) & 0xffL) << 8) | (b(3) & 0xffL)
+    val h = new Array[Long](8); var i = 0
+    while (i < 8) do { h(i) = le64(4 + 8 * i); i += 1 }
+    val m = new Array[Long](16); i = 0
+    while (i < 16) do { m(i) = le64(68 + 8 * i); i += 1 }
+    val t0 = le64(196); val t1 = le64(204); val f = b(212) != 0
+
+    val IV = Array(
+      0x6a09e667f3bcc908L, 0xbb67ae8584caa73bL, 0x3c6ef372fe94f82bL, 0xa54ff53a5f1d36f1L,
+      0x510e527fade682d1L, 0x9b05688c2b3e6c1fL, 0x1f83d9abfb41bd6bL, 0x5be0cd19137e2179L)
+    val SIGMA = Array(
+      Array(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+      Array(14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3),
+      Array(11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4),
+      Array(7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8),
+      Array(9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13),
+      Array(2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9),
+      Array(12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11),
+      Array(13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10),
+      Array(6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5),
+      Array(10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0))
+
+    val v = new Array[Long](16)
+    i = 0
+    while (i < 8) do { v(i) = h(i); v(i + 8) = IV(i); i += 1 }
+    v(12) ^= t0; v(13) ^= t1
+    if (f) v(14) = ~v(14)
+    def rotr(x: Long, n: Int): Long = (x >>> n) | (x << (64 - n))
+    def mix(a: Int, bb: Int, c: Int, d: Int, x: Long, y: Long): Unit = {
+      v(a) = v(a) + v(bb) + x; v(d) = rotr(v(d) ^ v(a), 32)
+      v(c) = v(c) + v(d); v(bb) = rotr(v(bb) ^ v(c), 24)
+      v(a) = v(a) + v(bb) + y; v(d) = rotr(v(d) ^ v(a), 16)
+      v(c) = v(c) + v(d); v(bb) = rotr(v(bb) ^ v(c), 63)
+    }
+    var r = 0L
+    while (r < rounds) do
+      val sg = SIGMA((r % 10).toInt)
+      mix(0, 4, 8, 12, m(sg(0)), m(sg(1)))
+      mix(1, 5, 9, 13, m(sg(2)), m(sg(3)))
+      mix(2, 6, 10, 14, m(sg(4)), m(sg(5)))
+      mix(3, 7, 11, 15, m(sg(6)), m(sg(7)))
+      mix(0, 5, 10, 15, m(sg(8)), m(sg(9)))
+      mix(1, 6, 11, 12, m(sg(10)), m(sg(11)))
+      mix(2, 7, 8, 13, m(sg(12)), m(sg(13)))
+      mix(3, 4, 9, 14, m(sg(14)), m(sg(15)))
+      r += 1
+
+    val out = new Array[Byte](64)
+    i = 0
+    while (i < 8) do
+      val hi = h(i) ^ v(i) ^ v(i + 8)
+      var k = 0
+      while (k < 8) do { out(8 * i + k) = ((hi >>> (8 * k)) & 0xff).toByte; k += 1 }
+      i += 1
+    fromBytes(out)
+  }
+
+  // BLAKE2F gas is one per round (the round count is the input's first 4 bytes).
+  @extern @pure
+  def blake2fGas(input: SList[BigInt]): BigInt = {
+    val b = toBytes(input)
+    BigInt(b(0) & 0xff) * 16777216 + BigInt(b(1) & 0xff) * 65536 + BigInt(b(2) & 0xff) * 256 + BigInt(b(3) & 0xff)
+  }.ensuring(_ >= 0)
+
   // Gas: static base + per-word cost. words(len) = ceil(len/32).
   def identityGas(len: BigInt): BigInt = {
     require(len >= 0)
@@ -116,15 +191,17 @@ object Precompiles:
   }.ensuring(_ >= 500)
 
   // The implemented precompile addresses: 0x02 SHA-256, 0x03 RIPEMD-160,
-  // 0x04 identity, 0x05 MODEXP. (0x01 and 0x06.. still fall through to empty.)
-  def isImplemented(a: BigInt): Boolean = a == 2 || a == 3 || a == 4 || a == 5
+  // 0x04 identity, 0x05 MODEXP, 0x09 BLAKE2F. (0x01 and the EC ones still fall
+  // through to the empty-account path.)
+  def isImplemented(a: BigInt): Boolean = a == 2 || a == 3 || a == 4 || a == 5 || a == 9
 
   def gasFor(a: BigInt, input: SList[BigInt]): BigInt = {
     require(isImplemented(a) && input.size >= 0)
     if (a == 2) sha256Gas(input.size)
     else if (a == 3) ripemd160Gas(input.size)
     else if (a == 4) identityGas(input.size)
-    else modexpGas(input)
+    else if (a == 5) modexpGas(input)
+    else blake2fGas(input)
   }.ensuring(_ >= 0)
 
   def outputFor(a: BigInt, input: SList[BigInt]): SList[BigInt] = {
@@ -132,7 +209,8 @@ object Precompiles:
     if (a == 2) sha256(input)
     else if (a == 3) ripemd160(input)
     else if (a == 4) identity(input)
-    else modexp(input)
+    else if (a == 5) modexp(input)
+    else blake2f(input)
   }
 
   // --- trusted byte plumbing (ignored by the verifier) ---

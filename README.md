@@ -146,7 +146,7 @@ src/main/scala/evm/
   value/   primitive value types
     Word256.scala              The 256-bit EVM word with verified arithmetic, bitwise, shift, signed, and comparison operations
     Keccak256.scala            Keccak-256 as a trusted @extern primitive (a real executable implementation, treated as a black box by the verifier)
-    Precompiles.scala          The precompiled contracts: identity (verified) and the crypto ones (SHA-256, RIPEMD-160, ...) as trusted @extern reference implementations, each validated against official vectors
+    Precompiles.scala          The precompiled contracts: identity (verified) and MODEXP (verified pow-mod spec + fast path), with SHA-256, RIPEMD-160 and BLAKE2F as trusted @extern reference implementations, each validated against official vectors
   state/   the mutable machine state
     Stack.scala                The 1024-item EVM stack (push, pop, peek, dup, swap), verified to respect the depth bound
     Memory.scala               Byte-addressable EVM memory (load, store, store8, mcopy, msize, expand), with proven write/read round-trips

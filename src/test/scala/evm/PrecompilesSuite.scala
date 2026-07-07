@@ -76,6 +76,23 @@ class PrecompilesSuite extends munit.FunSuite {
     assertEquals(toBig(Precompiles.modexp(modexpInput(1, 1, 1, Seq(9), Seq(2), Seq(0)))), BigInt(0))
   }
 
+  def hex(s: String): SList[BigInt] =
+    s.grouped(2).map(h => BigInt(h, 16)).toList.foldRight(SNil[BigInt](): SList[BigInt])((b, acc) => Cons(b, acc))
+
+  test("BLAKE2F (0x09) matches the EIP-152 vector") {
+    val input = hex("0000000c" +
+      "48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5" +
+      "d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b" +
+      "616263" + "00" * 125 +
+      "0300000000000000" + "0000000000000000" + "01")
+    assertEquals(input.size, BigInt(213))
+    val out = Precompiles.blake2f(input)
+    assertEquals(out.size, BigInt(64))
+    assertEquals(toBig(out), BigInt(
+      "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1" +
+      "7d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923", 16))
+  }
+
   test("precompile gas costs") {
     assertEquals(Precompiles.identityGas(0), BigInt(15))
     assertEquals(Precompiles.identityGas(32), BigInt(18))
