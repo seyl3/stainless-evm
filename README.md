@@ -137,10 +137,11 @@ on the core as compiled bytecode.
 ```
 src/main/scala/evm/
   math/    the pure-math and proof layer (no EVM-type references)
-    EvmMath.scala              Number theory: modulus, exponentiation, byte length, signed interpretation, bounds, and their lemmas
+    EvmMath.scala              Number theory: modulus, exponentiation, byte length, signed interpretation, bounds, and their lemmas (including the division/modulo scaffold for the digit law)
     Bitwise.scala              Bitwise and/or/xor as trusted @extern functions with assumed algebraic axioms; not is verified
     Collections.scala          Generic List/Map lemmas (for example updated preserves other indices)
     Bytes.scala                Byte-array packing over Map: readBytes/writeBytes/copyBytes plus framing and round-trip lemmas
+    ByteList.scala             Big-endian reads over a byte list (the calldata model), with the readWord per-byte digit law proven
     Gas.scala                  Pure gas pricing formulas (memory expansion, copy, keccak, exp, log, access, sstore) with non-negativity lemmas
   value/   primitive value types
     Word256.scala              The 256-bit EVM word with verified arithmetic, bitwise, shift, signed, and comparison operations
