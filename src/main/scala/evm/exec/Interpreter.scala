@@ -852,6 +852,16 @@ object Interpreter:
           else execute(s.chargeGas(cost), op)
   }.ensuring(r => !r.isRunning || r.gas < s.gas)
 
+  // The furthest memory byte a call touches: the end of its args region (read for
+  // the callData) or its return region (written on merge), whichever is larger; a
+  // zero-length region does not count. Kept as a helper so the non-negativity proof
+  // runs on the clean Word256 arguments, not in the call's polluted context.
+  def callMemEnd(argsOff: Word256, argsLen: Word256, retOff: Word256, retLen: Word256): BigInt = {
+    val argsEnd = if (argsLen.value == 0) BigInt(0) else argsOff.value + argsLen.value
+    val retEnd = if (retLen.value == 0) BigInt(0) else retOff.value + retLen.value
+    if (argsEnd > retEnd) argsEnd else retEnd
+  }.ensuring(r => r >= 0)
+
   // Pop the 6 STATICCALL args, charge the base cost, and either reject the call
   // (continue the parent) or build the child frame and the gas-forwarded parent.
   def prepareStaticCall(s: ExecState): CallPrep = {
@@ -865,12 +875,14 @@ object Interpreter:
       val (retOff, a5) = a4.pop()
       val (retLen, rest) = a5.pop()
       val callee = Address.fromWord(addr)
-      val cost = BigInt(100) + (if (s.accessedAccounts.contains(callee)) BigInt(0) else BigInt(2500))
+      val memEnd = callMemEnd(argsOff, argsLen, retOff, retLen)
+      val cost = BigInt(100) + (if (s.accessedAccounts.contains(callee)) BigInt(0) else BigInt(2500)) + memExpandCost(s, memEnd)
       if (s.outOfGas(cost)) CallReject(s.fail)
       else {
         // single copy to keep the VC term small (the fallback solver hangs on
         // chargeGas(...).copy(...) here)
-        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(callee))
+        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(callee),
+          memory = s.memory.expand(memEnd))
         if (s1.depth >= ExecState.MAX_DEPTH) {
           if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CallReject(s1.fail)
           else CallReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
@@ -905,10 +917,12 @@ object Interpreter:
       val (retOff, a5) = a4.pop()
       val (retLen, rest) = a5.pop()
       val target = Address.fromWord(addr)
-      val cost = BigInt(100) + (if (s.accessedAccounts.contains(target)) BigInt(0) else BigInt(2500))
+      val memEnd = callMemEnd(argsOff, argsLen, retOff, retLen)
+      val cost = BigInt(100) + (if (s.accessedAccounts.contains(target)) BigInt(0) else BigInt(2500)) + memExpandCost(s, memEnd)
       if (s.outOfGas(cost)) CallReject(s.fail)
       else {
-        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(target))
+        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(target),
+          memory = s.memory.expand(memEnd))
         if (s1.depth >= ExecState.MAX_DEPTH) {
           if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CallReject(s1.fail)
           else CallReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
@@ -946,11 +960,13 @@ object Interpreter:
       val callee = Address.fromWord(addr)
       val hasValue = value.value > 0
       val newAcct = hasValue && !s.world.accounts.contains(callee)
+      val memEnd = callMemEnd(argsOff, argsLen, retOff, retLen)
       val cost = BigInt(100) + (if (s.accessedAccounts.contains(callee)) BigInt(0) else BigInt(2500)) +
-        (if (hasValue) BigInt(9000) else BigInt(0)) + (if (newAcct) BigInt(25000) else BigInt(0))
+        (if (hasValue) BigInt(9000) else BigInt(0)) + (if (newAcct) BigInt(25000) else BigInt(0)) + memExpandCost(s, memEnd)
       if ((s.static && hasValue) || s.outOfGas(cost)) CallReject(s.fail)
       else {
-        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(callee))
+        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(callee),
+          memory = s.memory.expand(memEnd))
         if (s1.depth >= ExecState.MAX_DEPTH || s.world.balanceOf(s.msg.self).value < value.value) {
           if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CallReject(s1.fail)
           else CallReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
@@ -989,11 +1005,13 @@ object Interpreter:
       val (retLen, rest) = a6.pop()
       val target = Address.fromWord(addr)
       val hasValue = value.value > 0
+      val memEnd = callMemEnd(argsOff, argsLen, retOff, retLen)
       val cost = BigInt(100) + (if (s.accessedAccounts.contains(target)) BigInt(0) else BigInt(2500)) +
-        (if (hasValue) BigInt(9000) else BigInt(0))
+        (if (hasValue) BigInt(9000) else BigInt(0)) + memExpandCost(s, memEnd)
       if ((s.static && hasValue) || s.outOfGas(cost)) CallReject(s.fail)
       else {
-        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(target))
+        val s1 = s.copy(gas = s.gas - cost, accessedAccounts = s.accessedAccounts ++ Set(target),
+          memory = s.memory.expand(memEnd))
         if (s1.depth >= ExecState.MAX_DEPTH || s.world.balanceOf(s.msg.self).value < value.value) {
           if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CallReject(s1.fail)
           else CallReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
