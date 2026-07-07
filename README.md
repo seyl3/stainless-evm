@@ -104,6 +104,24 @@ sbt "cli/run disasm 602a60005260206000f3"
 0x0009  RETURN
 ```
 
+The `repl` command starts an interactive session against a single contract whose
+storage persists across lines, so state written by one snippet is visible to the
+next:
+
+```
+sbt "cli/run repl"
+```
+```
+evm> 602a600055                        # SSTORE slot 0 = 0x2a
+  status Halted   gas used 22106   return 0x (empty)   logs 0
+evm> 60005460005260206000f3            # SLOAD slot 0, MSTORE, RETURN
+  status Halted   gas used 2118   return 0x000000000000000000000000000000000000000000000000000000000000002a
+evm> :q
+```
+
+Inside the REPL, `:disasm <hex>`, `:gas N`, `:reset`, `:help`, and `:q` are
+available.
+
 `sbt "cli/run help"` prints usage. Running the CLI recompiles the core dependency,
 so Stainless re-verifies it (cached).
 

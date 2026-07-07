@@ -5,7 +5,7 @@ import stainless.lang.{Map => SMap}
 import evm.value.Word256
 import evm.code.{Code, Opcode}
 import evm.env.{Account, Address, BlockContext, TxContext, MessageContext, WorldState}
-import evm.exec.{ExecState, Interpreter, Transaction}
+import evm.exec.{ExecState, Interpreter, Transaction, Status}
 
 // Unverified CLI over the verified EVM core. Parses arguments and hex bytecode,
 // hands them to Interpreter.run, and prints the result. None of this file is
@@ -18,6 +18,7 @@ object Main:
       case "run"    => run(args.drop(1))
       case "tx"     => tx(args.drop(1))
       case "disasm" => disasm(args.drop(1))
+      case "repl"   => repl()
       case "help" | "--help" | "-h" => usage()
       case other    => Console.err.println(s"unknown command: $other"); usage()
 
@@ -35,6 +36,9 @@ object Main:
         |      print settlement and before/after account balances and nonces
         |  disasm <hex>
         |      disassemble bytecode into opcodes with their offsets and immediates
+        |  repl
+        |      interactive session: run bytecode against one contract whose storage
+        |      persists across lines (so SSTORE then SLOAD works); :help for commands
         |
         |example:
         |  run 602a60005260206000f3        # MSTORE 42, RETURN it (returns 0x..2a)""".stripMargin)
@@ -78,7 +82,7 @@ object Main:
       to -> Account(Word256.Zero, code)))
     val block = BlockContext(coinbase, Word256.Zero, Word256.Zero, Word256.Zero,
       Word256.Zero, Word256.Zero, baseFee, Word256.Zero, SMap.empty[Word256, Word256])
-    val transaction = Transaction(from, to, value, gas, maxFee, prioFee, nonce, callData)
+    val transaction = Transaction(from, to, value, gas, maxFee, prioFee, nonce, callData, SNil(), false)
     val res = Transaction.run(transaction, block, world)
 
     println(s"status:       ${res.status}")
@@ -125,6 +129,47 @@ object Main:
       else
         println(f"0x$pc%04x  ${"?"}%-13s 0x$b%02x  (undefined)")
         pc += 1
+
+  // Interactive REPL: each hex line runs as bytecode against one contract whose
+  // storage persists, so state written by SSTORE is visible to a later SLOAD.
+  private def repl(): Unit =
+    val addr = Address(BigInt(0x1000))
+    def fresh = WorldState(SMap(addr -> Account(Word256.Zero, Code.empty)))
+    var world = fresh
+    var gas = BigInt(1000000)
+    println("stainless-evm REPL - type bytecode hex to run it, or :help. Ctrl-D or :q to exit.")
+    var line = scala.io.StdIn.readLine("evm> ")
+    while (line != null && { val t = line.trim; t != ":q" && t != ":quit" }) do
+      val t = line.trim
+      if (t.isEmpty) ()
+      else if (t == ":help") replHelp()
+      else if (t == ":reset") { world = fresh; println("storage reset") }
+      else if (t.startsWith(":gas ")) { gas = BigInt(t.substring(5).trim); println(s"gas limit set to $gas") }
+      else if (t.startsWith(":disasm ")) disasm(Array(t.substring(8).trim))
+      else world = replRun(t, addr, world, gas)
+      line = scala.io.StdIn.readLine("evm> ")
+    println("bye")
+
+  // Run one bytecode line at addr with persistent storage; print the outcome and
+  // return the (possibly updated) world.
+  private def replRun(hex: String, addr: Address, world: WorldState, gas: BigInt): WorldState =
+    val code = Code(parseHex(hex))
+    val s = world.storageOf(addr)
+    val msg = MessageContext(addr, Address.zero, Word256.Zero, SNil())
+    val init = ExecState.initialWith(code, gas, BlockContext.empty, TxContext.empty, msg, world)
+      .copy(storage = s, original = s)
+    val res = Interpreter.run(init)
+    println(s"  status ${res.status}   gas used ${gas - res.gas}   return ${toHex(res.returnData)}   logs ${res.logs.size}")
+    if (res.status == Status.Halted) world.withStorage(addr, res.storage) else world
+
+  private def replHelp(): Unit =
+    println(
+      """  <hex>          run bytecode at the current contract (storage persists)
+        |  :disasm <hex>  disassemble bytecode
+        |  :gas N         set the gas limit (default 1000000)
+        |  :reset         clear the contract's storage
+        |  :help          this help
+        |  :q             quit""".stripMargin)
 
   // Convert a hex string (optional 0x prefix) into a byte list for the core.
   private def parseHex(s: String): SList[BigInt] =

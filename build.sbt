@@ -23,4 +23,7 @@ lazy val cli = project
     name := "stainless-evm-cli",
     scalaVersion := scala3Version,
     scalacOptions += "-Wconf:src=.*stainless-library.*:s",
+    // fork + connectInput so the repl reads stdin (interactive or piped)
+    run / fork := true,
+    run / connectInput := true,
   )
