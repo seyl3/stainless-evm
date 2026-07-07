@@ -11,7 +11,9 @@ import evm.math.ByteList
 import evm.math.Bytes
 import evm.state.Stack
 import evm.code.Opcode
+import evm.code.Code
 import evm.env.Address
+import evm.env.CreateAddress
 import evm.env.Log
 import evm.env.WorldState
 
@@ -27,6 +29,16 @@ case class CallReject(state: ExecState) extends CallPrep
 // the world to restore if the child fails/reverts (rolls back value transfer too).
 case class CallEnter(child: ExecState, parentForwarded: ExecState, rest: Stack, forwarded: BigInt,
                      commitState: Boolean, sameAccount: Boolean, self: Address, preWorld: WorldState) extends CallPrep
+
+// The analogue for CREATE/CREATE2: a rejected creation (push 0, continue the
+// parent) or an initcode frame to run. newAddr is the derived contract address;
+// preWorld is the world to restore on initcode failure (the creator's nonce has
+// already been incremented in it, so that increment persists, but the value
+// transfer is rolled back).
+sealed abstract class CreatePrep
+case class CreateReject(state: ExecState) extends CreatePrep
+case class CreateEnter(child: ExecState, parentForwarded: ExecState, rest: Stack, forwarded: BigInt,
+                       newAddr: Address, preWorld: WorldState) extends CreatePrep
 
 // The interpreter. `step` charges base gas and dispatches one opcode to a helper;
 // `run` iterates step to completion and also handles the recursive call opcodes.
@@ -1007,6 +1019,84 @@ object Interpreter:
     ).advancePc(1)
   }.ensuring(r => r.gas <= enter.parentForwarded.gas + enter.forwarded)
 
+  // CREATE / CREATE2: charge 32000 + 2/word initcode (plus 6/word for the CREATE2
+  // keccak) + memory, increment the creator nonce, derive the new address, and
+  // either reject (static, out of gas, depth/balance limit, or an address collision
+  // -> push 0) or build the initcode frame with 63/64 of the gas forwarded and the
+  // value transferred. The nonce bump lives in preWorld so it survives a failure.
+  def prepareCreate(s: ExecState, isCreate2: Boolean): CreatePrep = {
+    require(s.isRunning)
+    val need = if (isCreate2) BigInt(4) else BigInt(3)
+    if (s.static || s.stack.data.size < need) CreateReject(s.fail)
+    else {
+      val (value, a1) = s.stack.pop()
+      val (off, a2) = a1.pop()
+      val (len, a3) = a2.pop()
+      val (salt, rest) = if (isCreate2) a3.pop() else (Word256.Zero, a3)
+      val initcode = Bytes.readList(s.memory.data, off.value, len.value)
+      val w = Gas.words(len.value)
+      val memCost = if (len.value == 0) BigInt(0) else memExpandCost(s, off.value + len.value)
+      val cost = BigInt(32000) + 2 * w + memCost + (if (isCreate2) 6 * w else BigInt(0))
+      if (len.value > 49152 || s.outOfGas(cost)) CreateReject(s.fail)
+      else {
+        val nonce = s.world.nonceOf(s.msg.self)
+        val newAddr = if (isCreate2) CreateAddress.create2(s.msg.self, salt, Keccak256.hash(initcode))
+                      else CreateAddress.create(s.msg.self, nonce)
+        val bumped = s.world.withNonce(s.msg.self, nonce + 1)
+        val s1 = s.copy(gas = s.gas - cost, world = bumped,
+          memory = if (len.value == 0) s.memory else s.memory.expand(off.value + len.value),
+          accessedAccounts = s.accessedAccounts ++ Set(newAddr))
+        val collision = s.world.accounts.contains(newAddr) &&
+          (s.world.nonceOf(newAddr) != 0 || s.world.codeOf(newAddr).size > 0)
+        if (s1.depth >= ExecState.MAX_DEPTH || s.world.balanceOf(s.msg.self).value < value.value || collision) {
+          if (rest.data.size >= Stack.MAXIMUM_STACK_SIZE) CreateReject(s1.fail)
+          else CreateReject(s1.copy(stack = rest.push(Word256.Zero)).advancePc(1))
+        } else {
+          val forwarded = s1.gas - s1.gas / 64
+          val transferred = bumped.transfer(s.msg.self, newAddr, value)
+          val child = ExecState.subFrame(Code(initcode), newAddr, s.msg.self, value, Nil[BigInt](),
+            forwarded, s1.depth + 1, s1.static, s1.block, s1.tx, transferred,
+            transferred.storageOf(newAddr), transferred.storageOf(newAddr), s1.accessedAccounts)
+          CreateEnter(child, s1.copy(gas = s1.gas - forwarded), rest, forwarded, newAddr, bumped)
+        }
+      }
+    }
+  }.ensuring(r => r match
+    case CreateReject(sr) => !sr.isRunning || sr.gas < s.gas
+    case ce: CreateEnter => ce.forwarded >= 0 && ce.parentForwarded.gas >= 0 && ce.child.gas < s.gas && ce.parentForwarded.gas + ce.forwarded < s.gas)
+
+  // Merge a finished initcode frame. On success the returned bytes become the new
+  // contract's code (charged 200/byte from the child's leftover gas, capped at
+  // 24576 by EIP-170), the new address is pushed, and the account (storage + code +
+  // transferred value) is committed. Otherwise (failure, reverted, code too big, or
+  // deployment gas short) push 0 and roll back to preWorld, undoing the transfer.
+  def mergeCreate(enter: CreateEnter, childRes: ExecState): ExecState = {
+    require(enter.parentForwarded.gas >= 0 && enter.forwarded >= 0)
+    val success = childRes.status == Status.Halted
+    val code = childRes.returnData
+    val depCost = 200 * code.size
+    val refund = if (childRes.gas < enter.forwarded) childRes.gas else enter.forwarded
+    val deployOk = success && code.size <= 24576 && depCost <= refund
+    if (enter.rest.data.size >= Stack.MAXIMUM_STACK_SIZE) enter.parentForwarded.fail
+    else if (deployOk)
+      enter.parentForwarded.copy(
+        gas = enter.parentForwarded.gas + (refund - depCost),
+        stack = enter.rest.push(enter.newAddr.toWord),
+        returnData = Nil[BigInt](),
+        world = childRes.world.withStorage(enter.newAddr, childRes.storage).withCode(enter.newAddr, Code(code)),
+        logs = childRes.logs,
+        refund = enter.parentForwarded.refund + childRes.refund,
+        accessedAccounts = childRes.accessedAccounts,
+        accessedSlots = childRes.accessedSlots).advancePc(1)
+    else
+      enter.parentForwarded.copy(
+        gas = enter.parentForwarded.gas + refund,
+        stack = enter.rest.push(Word256.Zero),
+        returnData = if (childRes.status == Status.Reverted) childRes.returnData else Nil[BigInt](),
+        world = enter.preWorld,
+        accessedAccounts = childRes.accessedAccounts).advancePc(1)
+  }.ensuring(r => r.gas <= enter.parentForwarded.gas + enter.forwarded)
+
   // Drive the frame to a stopped state. The call opcodes are intercepted here (not
   // in execute) so run stays self-recursive with a single `decreases(s.gas)`
   // measure: the child runs on strictly less gas (63/64 rule), and the merged
@@ -1038,6 +1128,18 @@ object Interpreter:
         case CallReject(sr) => if (!sr.isRunning) sr else run(sr)
         case ce: CallEnter =>
           val parent2 = mergeCall(ce, run(ce.child))
+          if (!parent2.isRunning) parent2 else run(parent2)
+    } else if (s.pc < s.code.size && s.code.opcodeAt(s.pc) == Some(Opcode.CREATE)) {
+      prepareCreate(s, false) match
+        case CreateReject(sr) => if (!sr.isRunning) sr else run(sr)
+        case ce: CreateEnter =>
+          val parent2 = mergeCreate(ce, run(ce.child))
+          if (!parent2.isRunning) parent2 else run(parent2)
+    } else if (s.pc < s.code.size && s.code.opcodeAt(s.pc) == Some(Opcode.CREATE2)) {
+      prepareCreate(s, true) match
+        case CreateReject(sr) => if (!sr.isRunning) sr else run(sr)
+        case ce: CreateEnter =>
+          val parent2 = mergeCreate(ce, run(ce.child))
           if (!parent2.isRunning) parent2 else run(parent2)
     } else {
       val s1 = step(s)

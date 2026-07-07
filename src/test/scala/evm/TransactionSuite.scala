@@ -353,4 +353,84 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.status, Status.Halted)
     assertEquals(res.gasUsed, BigInt(21080))
   }
+
+  // Helper: read a 32-byte returnData word (a returned address) as a BigInt.
+  def returnedWord(res: TxResult): BigInt =
+    res.returnData.foldLeft(BigInt(0))((acc, b) => (acc << 8) | b)
+
+  test("CREATE deploys a contract at the derived address and bumps the creator nonce") {
+    // CREATE(value=0, off=0, len=1) over mem[0]=0x00 (memory is zero, so initcode is STOP),
+    // then MSTORE the returned address and RETURN it
+    val program = code(0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xF0, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3)
+    val res = Transaction.run(tx(200000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    val expected = CreateAddress.create(to, 0)
+    assertEquals(returnedWord(res), expected.value)
+    assertEquals(res.world.nonceOf(to), BigInt(1))
+    assert(res.world.accounts.contains(expected))
+    assertEquals(res.world.codeOf(expected).size, BigInt(0)) // STOP initcode returns no code
+  }
+
+  test("CREATE installs the runtime code returned by the initcode") {
+    // initcode 0x6001600 0f3 (PUSH1 1, PUSH1 0, RETURN) returns mem[0:1] = 0x00, a 1-byte STOP.
+    // Outer: PUSH5 the initcode, MSTORE at 0 (lands in mem[27:32]), CREATE(0, 27, 5), STOP.
+    val program = code(
+      0x64, 0x60, 0x01, 0x60, 0x00, 0xF3, 0x60, 0x00, 0x52,
+      0x60, 0x05, 0x60, 0x1B, 0x60, 0x00, 0xF0, 0x00)
+    val res = Transaction.run(tx(200000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    val created = CreateAddress.create(to, 0)
+    assertEquals(res.world.codeOf(created).code, Cons(BigInt(0), Nil[BigInt]()))
+  }
+
+  test("CREATE2 deploys at the salted address") {
+    // Same initcode as above, via CREATE2 with salt 0x99: push salt, len, off, value.
+    val program = code(
+      0x64, 0x60, 0x01, 0x60, 0x00, 0xF3, 0x60, 0x00, 0x52,
+      0x60, 0x99, 0x60, 0x05, 0x60, 0x1B, 0x60, 0x00, 0xF5, 0x00)
+    val res = Transaction.run(tx(200000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    val initcode: List[BigInt] = Cons(BigInt(0x60), Cons(BigInt(0x01), Cons(BigInt(0x60), Cons(BigInt(0x00), Cons(BigInt(0xF3), Nil())))))
+    val expected = CreateAddress.create2(to, Word256(BigInt(0x99)), Keccak256.hash(initcode))
+    assert(res.world.accounts.contains(expected))
+    assertEquals(res.world.codeOf(expected).code, Cons(BigInt(0), Nil[BigInt]()))
+  }
+
+  test("CREATE transfers value to the new contract") {
+    // CREATE(value=100, off=0, len=1); the creator (to) is funded with 100.
+    val program = code(0x60, 0x01, 0x60, 0x00, 0x60, 0x64, 0xF0, 0x00)
+    val world = WorldState(Map(to -> Account(Word256(BigInt(100)), program)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    val created = CreateAddress.create(to, 0)
+    assertEquals(res.world.balanceOf(created).value, BigInt(100))
+    assertEquals(res.world.balanceOf(to).value, BigInt(0))
+  }
+
+  test("CREATE with reverting initcode pushes zero but keeps the nonce bump") {
+    // initcode 0x6000600 0fd (PUSH1 0, PUSH1 0, REVERT); outer MSTOREs the result and returns it.
+    val program = code(
+      0x64, 0x60, 0x00, 0x60, 0x00, 0xFD, 0x60, 0x00, 0x52,
+      0x60, 0x05, 0x60, 0x1B, 0x60, 0x00, 0xF0, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3)
+    val res = Transaction.run(tx(200000), BlockContext.empty, worldWith(program))
+    assertEquals(res.status, Status.Halted)
+    assertEquals(returnedWord(res), BigInt(0)) // CREATE returned 0 (failure)
+    assertEquals(res.world.nonceOf(to), BigInt(1)) // nonce bump persists
+    assert(!res.world.accounts.contains(CreateAddress.create(to, 0)))
+  }
+
+  test("CREATE inside a STATICCALL fails (read-only context)") {
+    // to STATICCALLs callee; callee's code does CREATE then STOP. The CREATE must fail,
+    // so the whole callee frame fails and STATICCALL returns 0.
+    val calleeCode = code(0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xF0, 0x00)
+    val callerCode = code(
+      0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x61, 0x20, 0x00, 0x61, 0xC3, 0x50, 0xFA,
+      0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xF3)
+    val world = WorldState(Map(
+      to -> Account(Word256.Zero, callerCode),
+      callee -> Account(Word256.Zero, calleeCode)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData.head, BigInt(0)) // STATICCALL failed
+  }
 }

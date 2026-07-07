@@ -1,6 +1,8 @@
 package evm.env
 
 import stainless.lang.*
+import stainless.annotation.*
+import stainless.proof.*
 import evm.value.Word256
 import evm.code.Code
 import evm.state.Storage
@@ -10,7 +12,14 @@ import evm.state.Storage
 object Account:
   def apply(balance: Word256, code: Code): Account = Account(balance, code, Storage.empty, BigInt(0))
 
-case class Account(balance: Word256, code: Code, storage: Storage, nonce: BigInt)
+case class Account(balance: Word256, code: Code, storage: Storage, nonce: BigInt):
+  require(nonce >= 0)
+
+  // Exposes the nonce bound (the class invariant) as an invokable fact, so an
+  // updater copying this account can discharge the new account's invariant without
+  // the solver re-deriving nonce >= 0 through the enclosing Map lookup.
+  @ghost
+  def nonceNonNeg: Boolean = { nonce >= 0 }.holds
 
 // The world state: a map from address to account, with default-zero lookups for
 // absent accounts. Each `with*` updater proves it changes only its target field
@@ -39,17 +48,23 @@ case class WorldState(accounts: Map[Address, Account]):
   }.ensuring(r => r == (if (accounts.contains(a)) accounts(a).storage else Storage.empty))
 
   def nonceOf(a: Address): BigInt = {
-    getOrEmpty(a).nonce
-  }.ensuring(r => r == (if (accounts.contains(a)) accounts(a).nonce else BigInt(0)))
+    val acc = getOrEmpty(a)
+    acc.nonceNonNeg
+    acc.nonce
+  }.ensuring(r => r == (if (accounts.contains(a)) accounts(a).nonce else BigInt(0)) && r >= 0)
 
   def withStorage(a: Address, s: Storage): WorldState = {
-    WorldState(accounts.updated(a, getOrEmpty(a).copy(storage = s)))
+    val acc = getOrEmpty(a)
+    acc.nonceNonNeg
+    WorldState(accounts.updated(a, acc.copy(storage = s)))
   }.ensuring(r =>
     r.storageOf(a) == s && r.balanceOf(a) == balanceOf(a)
     && r.codeOf(a) == codeOf(a) && r.nonceOf(a) == nonceOf(a))
 
   def withBalance(a: Address, bal: Word256): WorldState = {
-    WorldState(accounts.updated(a, getOrEmpty(a).copy(balance = bal)))
+    val acc = getOrEmpty(a)
+    acc.nonceNonNeg
+    WorldState(accounts.updated(a, acc.copy(balance = bal)))
   }.ensuring(r =>
     r.balanceOf(a) == bal && r.storageOf(a) == storageOf(a)
     && r.codeOf(a) == codeOf(a) && r.nonceOf(a) == nonceOf(a))
@@ -60,6 +75,14 @@ case class WorldState(accounts: Map[Address, Account]):
   }.ensuring(r =>
     r.nonceOf(a) == n && r.balanceOf(a) == balanceOf(a)
     && r.codeOf(a) == codeOf(a) && r.storageOf(a) == storageOf(a))
+
+  def withCode(a: Address, c: Code): WorldState = {
+    val acc = getOrEmpty(a)
+    acc.nonceNonNeg
+    WorldState(accounts.updated(a, acc.copy(code = c)))
+  }.ensuring(r =>
+    r.codeOf(a) == c && r.balanceOf(a) == balanceOf(a)
+    && r.nonceOf(a) == nonceOf(a) && r.storageOf(a) == storageOf(a))
 
   // Move value from one account to another. Sufficient balance is a precondition
   // (so the subtraction cannot wrap), pushing the obligation onto every caller.
