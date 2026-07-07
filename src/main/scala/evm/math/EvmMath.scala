@@ -201,6 +201,43 @@ object EvmMath {
     a * b <= a * c because (a * (c - b) >= 0)
   }.holds
 
+  // Arithmetic scaffold for the big-endian digit law (ByteList.readWordDigit).
+  // These isolate the nonlinear pow/division/modulo steps so each stays tractable:
+  // symbolic-divisor division goes through divAddRemainder, while every modulo is by
+  // the constant 256 (linear for the solver).
+
+  // Euclidean quotient of a multiple plus a bounded remainder.
+  @ghost
+  def divAddRemainder(d: BigInt, m: BigInt, r: BigInt): Boolean = {
+    require(d > 0 && m >= 0 && 0 <= r && r < d)
+    (d * m + r) / d == m
+  }.holds
+
+  // Dividing k*d + w by d peels off k and leaves w/d.
+  @ghost
+  def divAddMultiple(d: BigInt, k: BigInt, w: BigInt): Boolean = {
+    require(d > 0 && k >= 0 && w >= 0)
+    divAddRemainder(d, k + w / d, w % d)
+    (k * d + w) / d == k + w / d
+  }.holds
+
+  // A multiple of 256 added in front does not change a value mod 256. Kept in
+  // explicit 256*k form so the modulo stays by a constant (linear for the solver).
+  @ghost
+  def modAdd256Multiple(k: BigInt, b: BigInt): Boolean = {
+    require(k >= 0 && b >= 0)
+    (256 * k + b) % 256 == b % 256
+  }.holds
+
+  // The final digit step with fully opaque arguments, so the modulo reasoning runs
+  // in a clean context away from the pow/division terms that produced q, k, wd.
+  @ghost
+  def digitCombine(q: BigInt, k: BigInt, wd: BigInt, byte: BigInt): Boolean = {
+    require(k >= 0 && wd >= 0 && q == 256 * k + wd && wd % 256 == byte)
+    modAdd256Multiple(k, wd)
+    q % 256 == byte
+  }.holds
+
   @ghost
   def mulLeMonoLeft(a: BigInt, b: BigInt, c: BigInt): Boolean = {
     require(a <= b && c >= 0)
