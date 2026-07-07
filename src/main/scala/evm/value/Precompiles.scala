@@ -1,8 +1,10 @@
 package evm.value
 
 import stainless.annotation.*
+import stainless.lang.*
 import stainless.collection.{List => SList, Cons, Nil => SNil}
 import evm.math.Gas
+import evm.math.EvmMath
 
 // The Ethereum precompiled contracts. Pure ones (identity, and MODEXP's arithmetic)
 // are verified; the cryptographic ones follow the trusted-primitive pattern of
@@ -30,6 +32,50 @@ object Precompiles:
     val padded = new Array[Byte](32)
     System.arraycopy(h, 0, padded, 12, 20)
     fromBytes(padded)
+  }
+
+  // MODEXP (0x05) arithmetic. The verified specification is base^exp mod m (0 when
+  // m == 0), pinned to be a canonical residue in [0, m).
+  def modexpSpec(base: BigInt, exp: BigInt, mod: BigInt): BigInt = {
+    require(base >= 0 && exp >= 0 && mod >= 0)
+    if (mod == 0) BigInt(0)
+    else {
+      EvmMath.powNonNeg(base, exp)
+      EvmMath.pow(base, exp) % mod
+    }
+  }.ensuring(r => r >= 0 && (mod == 0 || r < mod))
+
+  // The executable core: the JDK's fast modular exponentiation (square-and-multiply).
+  // The unit tests check it agrees with modexpSpec, so the trusted fast path is
+  // differentially validated against the verified naive definition.
+  @extern @pure
+  def modexpValue(base: BigInt, exp: BigInt, mod: BigInt): BigInt = {
+    if (mod <= 0) BigInt(0) else base.modPow(exp, mod)
+  }
+
+  // The byte-level MODEXP precompile: parse [baseLen|expLen|modLen|base|exp|mod]
+  // and return base^exp mod m as modLen big-endian bytes.
+  @extern
+  def modexp(input: SList[BigInt]): SList[BigInt] = {
+    val b = toBytes(input)
+    def rd(off: Int, n: Int): BigInt = {
+      var v = BigInt(0)
+      var i = 0
+      while (i < n) do { v = (v << 8) | BigInt(if (off + i < b.length) (b(off + i) & 0xff) else 0); i += 1 }
+      v
+    }
+    val baseLen = rd(0, 32).toInt
+    val expLen = rd(32, 32).toInt
+    val modLen = rd(64, 32).toInt
+    val base = rd(96, baseLen)
+    val exp = rd(96 + baseLen, expLen)
+    val mod = rd(96 + baseLen + expLen, modLen)
+    val result = modexpValue(base, exp, mod)
+    val out = new Array[Byte](modLen)
+    var r = result
+    var i = modLen - 1
+    while (i >= 0) do { out(i) = (r % 256).toInt.toByte; r = r / 256; i -= 1 }
+    fromBytes(out)
   }
 
   // Gas: static base + per-word cost. words(len) = ceil(len/32).

@@ -45,6 +45,37 @@ class PrecompilesSuite extends munit.FunSuite {
       BigInt("5d0689ef49d2fae572b881b123a85ffa21595f36", 16))
   }
 
+  def sl(xs: Seq[Int]): SList[BigInt] =
+    xs.foldRight(SNil[BigInt](): SList[BigInt])((x, acc) => Cons(BigInt(x), acc))
+  def pad32(v: Int): Seq[Int] = Seq.fill(31)(0) :+ v
+  def modexpInput(bl: Int, el: Int, ml: Int, base: Seq[Int], exp: Seq[Int], mod: Seq[Int]): SList[BigInt] =
+    sl(pad32(bl) ++ pad32(el) ++ pad32(ml) ++ base ++ exp ++ mod)
+
+  test("MODEXP (0x05) fast path agrees with the verified spec (differential)") {
+    assertEquals(Precompiles.modexpValue(3, 5, 7), Precompiles.modexpSpec(3, 5, 7))
+    assertEquals(Precompiles.modexpValue(2, 10, 1000), Precompiles.modexpSpec(2, 10, 1000))
+    assertEquals(Precompiles.modexpValue(7, 0, 13), Precompiles.modexpSpec(7, 0, 13))
+    assertEquals(Precompiles.modexpValue(123, 456, 789), Precompiles.modexpSpec(123, 456, 789))
+    assertEquals(Precompiles.modexpSpec(3, 5, 7), BigInt(5)) // 243 mod 7
+  }
+
+  test("MODEXP (0x05) byte-level: 3^5 mod 7 = 5") {
+    val out = Precompiles.modexp(modexpInput(1, 1, 1, Seq(3), Seq(5), Seq(7)))
+    assertEquals(out.size, BigInt(1))
+    assertEquals(toBig(out), BigInt(5))
+  }
+
+  test("MODEXP (0x05) byte-level: 2^10 mod 1000 = 24, output is modLen bytes") {
+    val out = Precompiles.modexp(modexpInput(1, 1, 2, Seq(2), Seq(10), Seq(0x03, 0xE8)))
+    assertEquals(out.size, BigInt(2))
+    assertEquals(toBig(out), BigInt(24))
+  }
+
+  test("MODEXP (0x05) byte-level: exp 0 gives 1, mod 0 gives 0") {
+    assertEquals(toBig(Precompiles.modexp(modexpInput(1, 1, 1, Seq(9), Seq(0), Seq(13)))), BigInt(1))
+    assertEquals(toBig(Precompiles.modexp(modexpInput(1, 1, 1, Seq(9), Seq(2), Seq(0)))), BigInt(0))
+  }
+
   test("precompile gas costs") {
     assertEquals(Precompiles.identityGas(0), BigInt(15))
     assertEquals(Precompiles.identityGas(32), BigInt(18))
