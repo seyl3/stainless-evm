@@ -419,6 +419,33 @@ class TransactionSuite extends munit.FunSuite {
     assert(!res.world.accounts.contains(CreateAddress.create(to, 0)))
   }
 
+  test("EIP-6780: SELFDESTRUCT of a same-transaction CREATE deletes the account") {
+    // outer CREATEs (value 100) a contract whose initcode is PUSH1 0x99, SELFDESTRUCT.
+    // The new contract is created and destroyed in one tx, so it is deleted; its value
+    // escapes to the beneficiary 0x99.
+    val program = code(
+      0x62, 0x60, 0x99, 0xFF, 0x60, 0x00, 0x52,
+      0x60, 0x03, 0x60, 0x1D, 0x60, 0x64, 0xF0, 0x00)
+    val world = WorldState(Map(to -> Account(Word256(BigInt(100)), program)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    val created = CreateAddress.create(to, 0)
+    assertEquals(res.world.balanceOf(Address(BigInt(0x99))).value, BigInt(100)) // value escaped
+    assertEquals(res.world.balanceOf(created).value, BigInt(0))
+    assertEquals(res.world.codeOf(created).size, BigInt(0)) // account deleted
+  }
+
+  test("EIP-6780: SELFDESTRUCT of a pre-existing contract keeps its code") {
+    // to is pre-existing (not created this tx): PUSH1 0x99, SELFDESTRUCT. Only the
+    // balance moves; the code survives.
+    val program = code(0x60, 0x99, 0xFF)
+    val world = WorldState(Map(to -> Account(Word256(BigInt(50)), program)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.world.balanceOf(Address(BigInt(0x99))).value, BigInt(50))
+    assertEquals(res.world.codeOf(to).size, BigInt(3)) // not deleted
+  }
+
   test("CREATE inside a STATICCALL fails (read-only context)") {
     // to STATICCALLs callee; callee's code does CREATE then STOP. The CREATE must fail,
     // so the whole callee frame fails and STATICCALL returns 0.

@@ -621,8 +621,9 @@ object Interpreter:
           && r.stack.data.tail == st.stack.data.tail.tail)))
 
   // SELFDESTRUCT: transfer the whole balance of the executing account to the
-  // beneficiary and halt. Post-EIP-6780 it does not delete code/storage unless the
-  // account was created in the same transaction (unreachable until CREATE exists).
+  // beneficiary and halt. Post-EIP-6780 the account's code/storage are deleted only
+  // if it was created in the same transaction (tracked in `created`); otherwise the
+  // account survives and only the balance moves.
   def selfdestructOp(st: ExecState): ExecState = {
     if (st.static || st.stack.data.isEmpty) st.fail
     else {
@@ -631,18 +632,24 @@ object Interpreter:
       val extra = (if (st.accessedAccounts.contains(beneficiary)) BigInt(0) else BigInt(2600)) +
         (if (bal.value > 0 && !st.world.accounts.contains(beneficiary)) BigInt(25000) else BigInt(0))
       if (st.outOfGas(extra)) st.fail
-      else st.copy(
-        gas = st.gas - extra,
-        world = st.world.transfer(st.msg.self, beneficiary, bal),
-        accessedAccounts = st.accessedAccounts ++ Set(beneficiary),
-        status = Status.Halted)
+      else {
+        val moved = st.world.transfer(st.msg.self, beneficiary, bal)
+        val newWorld = if (st.created.contains(st.msg.self)) moved.destroy(st.msg.self) else moved
+        st.copy(
+          gas = st.gas - extra,
+          world = newWorld,
+          accessedAccounts = st.accessedAccounts ++ Set(beneficiary),
+          status = Status.Halted)
+      }
     }
   }.ensuring(r =>
     !r.isRunning && r.gas <= st.gas
     && (r.status == Status.Halted ==>
          (st.stack.data.nonEmpty
           && r.accessedAccounts.contains(Address.fromWord(st.stack.data.head))
-          && r.world == st.world.transfer(st.msg.self, Address.fromWord(st.stack.data.head), st.world.balanceOf(st.msg.self)))))
+          && r.world == (if (st.created.contains(st.msg.self))
+               st.world.transfer(st.msg.self, Address.fromWord(st.stack.data.head), st.world.balanceOf(st.msg.self)).destroy(st.msg.self)
+             else st.world.transfer(st.msg.self, Address.fromWord(st.stack.data.head), st.world.balanceOf(st.msg.self))))))
 
   // Dispatch a single already-base-charged opcode to its helper. Called by step
   // with base gas removed; the call opcodes are not handled here but in run (they
@@ -871,7 +878,7 @@ object Interpreter:
           val calleeStorage = s1.world.storageOf(callee)
           val child = ExecState.subFrame(s1.world.codeOf(callee), callee, s1.msg.self, Word256.Zero,
             callData, g, s1.depth + 1, true, s1.block, s1.tx, s1.world, calleeStorage, calleeStorage,
-            s1.accessedAccounts)
+            s1.accessedAccounts, s1.created)
           CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, false, false, callee, s.world)
         }
       }
@@ -906,7 +913,7 @@ object Interpreter:
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
           val child = ExecState.subFrame(s1.world.codeOf(target), s1.msg.self, s1.msg.caller,
             s1.msg.callValue, callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, s1.world,
-            s1.storage, s1.original, s1.accessedAccounts)
+            s1.storage, s1.original, s1.accessedAccounts, s1.created)
           CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, true, true, s1.msg.self, s.world)
         }
       }
@@ -948,7 +955,7 @@ object Interpreter:
           val transferred = s1.world.transfer(s1.msg.self, callee, value)
           val child = ExecState.subFrame(transferred.codeOf(callee), callee, s1.msg.self, value,
             callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, transferred,
-            transferred.storageOf(callee), transferred.storageOf(callee), s1.accessedAccounts)
+            transferred.storageOf(callee), transferred.storageOf(callee), s1.accessedAccounts, s1.created)
           CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, false, callee, s.world)
         }
       }
@@ -988,7 +995,7 @@ object Interpreter:
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
           val child = ExecState.subFrame(s1.world.codeOf(target), s1.msg.self, s1.msg.self, value,
             callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, s1.world, s1.storage, s1.original,
-            s1.accessedAccounts)
+            s1.accessedAccounts, s1.created)
           CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, true, s1.msg.self, s.world)
         }
       }
@@ -1015,7 +1022,8 @@ object Interpreter:
       storage = if (commit && enter.sameAccount) childRes.storage else enter.parentForwarded.storage,
       accessedSlots = if (commit && enter.sameAccount) childRes.accessedSlots else enter.parentForwarded.accessedSlots,
       logs = if (commit) childRes.logs else enter.parentForwarded.logs,
-      refund = if (commit) enter.parentForwarded.refund + childRes.refund else enter.parentForwarded.refund
+      refund = if (commit) enter.parentForwarded.refund + childRes.refund else enter.parentForwarded.refund,
+      created = childRes.created
     ).advancePc(1)
   }.ensuring(r => r.gas <= enter.parentForwarded.gas + enter.forwarded)
 
@@ -1056,7 +1064,7 @@ object Interpreter:
           val transferred = bumped.transfer(s.msg.self, newAddr, value)
           val child = ExecState.subFrame(Code(initcode), newAddr, s.msg.self, value, Nil[BigInt](),
             forwarded, s1.depth + 1, s1.static, s1.block, s1.tx, transferred,
-            transferred.storageOf(newAddr), transferred.storageOf(newAddr), s1.accessedAccounts)
+            transferred.storageOf(newAddr), transferred.storageOf(newAddr), s1.accessedAccounts, s1.created ++ Set(newAddr))
           CreateEnter(child, s1.copy(gas = s1.gas - forwarded), rest, forwarded, newAddr, bumped)
         }
       }
@@ -1087,14 +1095,16 @@ object Interpreter:
         logs = childRes.logs,
         refund = enter.parentForwarded.refund + childRes.refund,
         accessedAccounts = childRes.accessedAccounts,
-        accessedSlots = childRes.accessedSlots).advancePc(1)
+        accessedSlots = childRes.accessedSlots,
+        created = childRes.created).advancePc(1)
     else
       enter.parentForwarded.copy(
         gas = enter.parentForwarded.gas + refund,
         stack = enter.rest.push(Word256.Zero),
         returnData = if (childRes.status == Status.Reverted) childRes.returnData else Nil[BigInt](),
         world = enter.preWorld,
-        accessedAccounts = childRes.accessedAccounts).advancePc(1)
+        accessedAccounts = childRes.accessedAccounts,
+        created = childRes.created).advancePc(1)
   }.ensuring(r => r.gas <= enter.parentForwarded.gas + enter.forwarded)
 
   // Drive the frame to a stopped state. The call opcodes are intercepted here (not

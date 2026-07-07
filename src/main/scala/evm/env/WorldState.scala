@@ -84,6 +84,13 @@ case class WorldState(accounts: Map[Address, Account]):
     r.codeOf(a) == c && r.balanceOf(a) == balanceOf(a)
     && r.nonceOf(a) == nonceOf(a) && r.storageOf(a) == storageOf(a))
 
+  // Clear an account to empty (EIP-6780 SELFDESTRUCT of a same-tx-created contract):
+  // its code, storage, nonce, and balance are dropped. The balance must be moved
+  // out first; whatever remains here is burned.
+  def destroy(a: Address): WorldState = {
+    WorldState(accounts.updated(a, Account(Word256.Zero, Code.empty)))
+  }.ensuring(r => r.balanceOf(a) == Word256.Zero && r.codeOf(a).size == 0)
+
   // Move value from one account to another. Sufficient balance is a precondition
   // (so the subtraction cannot wrap), pushing the obligation onto every caller.
   def transfer(from: Address, to: Address, value: Word256): WorldState = {
