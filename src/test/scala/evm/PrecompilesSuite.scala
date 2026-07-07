@@ -142,6 +142,28 @@ class PrecompilesSuite extends munit.FunSuite {
     assertEquals(Precompiles.p256Verify(slb(bad)).size, BigInt(0))
   }
 
+  def w256(v: BigInt): String = { val s = v.toString(16); "0" * (64 - s.length) + s }
+
+  test("bn254 ecMul (0x07): 2*G equals the known doubled generator") {
+    val out = Precompiles.bn254Mul(hex(w256(1) + w256(2) + w256(2)))
+    assertEquals(out.size, BigInt(64))
+    val full = toBig(out)
+    assertEquals(full >> 256, BigInt("1368015179489954701390400359078579693043519447331113978918064868415326638035"))
+    assertEquals(full % BigInt(2).pow(256), BigInt("9918110051302171585080402603319702774565515993150576347155970296011118125764"))
+  }
+
+  test("bn254 ecAdd (0x06): G + G equals 2*G") {
+    val add = Precompiles.bn254Add(hex(w256(1) + w256(2) + w256(1) + w256(2)))
+    val mul = Precompiles.bn254Mul(hex(w256(1) + w256(2) + w256(2)))
+    assertEquals(add, mul)
+  }
+
+  test("bn254: scalar 0 gives the identity, adding the identity is a no-op") {
+    assertEquals(toBig(Precompiles.bn254Mul(hex(w256(1) + w256(2) + w256(0)))), BigInt(0))
+    val addId = Precompiles.bn254Add(hex(w256(1) + w256(2) + w256(0) + w256(0)))
+    assertEquals(toBig(addId), BigInt(1) * BigInt(2).pow(256) + BigInt(2))
+  }
+
   test("precompile gas costs") {
     assertEquals(Precompiles.identityGas(0), BigInt(15))
     assertEquals(Precompiles.identityGas(32), BigInt(18))

@@ -230,6 +230,74 @@ object Precompiles:
     if (recovered == null) fromBytes(new Array[Byte](0)) else fromBytes(recovered)
   }
 
+  // Short-Weierstrass (a = 0) point math over F_p; points are [x, y] or null for
+  // the identity. Shared by the bn254 precompiles.
+  @extern @pure
+  private def curveDbl(pt: Array[JBI], p: JBI): Array[JBI] =
+    if (pt == null || pt(1).signum == 0) null
+    else {
+      val lam = pt(0).multiply(pt(0)).multiply(JBI.valueOf(3)).multiply(pt(1).add(pt(1)).modInverse(p)).mod(p)
+      val xr = lam.multiply(lam).subtract(pt(0).add(pt(0))).mod(p)
+      Array(xr, lam.multiply(pt(0).subtract(xr)).subtract(pt(1)).mod(p))
+    }
+
+  @extern @pure
+  private def curveAdd(pp: Array[JBI], qq: Array[JBI], p: JBI): Array[JBI] =
+    if (pp == null) qq else if (qq == null) pp
+    else if (pp(0).equals(qq(0)))
+      (if (pp(1).add(qq(1)).mod(p).signum == 0) null else curveDbl(pp, p))
+    else {
+      val lam = qq(1).subtract(pp(1)).multiply(qq(0).subtract(pp(0)).modInverse(p)).mod(p)
+      val xr = lam.multiply(lam).subtract(pp(0)).subtract(qq(0)).mod(p)
+      Array(xr, lam.multiply(pp(0).subtract(xr)).subtract(pp(1)).mod(p))
+    }
+
+  @extern @pure
+  private def curveMul(k: JBI, pt: Array[JBI], p: JBI): Array[JBI] = {
+    var res: Array[JBI] = null; var addend = pt; var kk = k
+    while (kk.signum > 0) do { if (kk.testBit(0)) res = curveAdd(res, addend, p); addend = curveDbl(addend, p); kk = kk.shiftRight(1) }
+    res
+  }
+
+  // Encode a bn254 G1 point as 64 bytes (identity as (0,0)).
+  @extern @pure
+  private def bn254Out(pt: Array[JBI]): SList[BigInt] = {
+    def to32(x: JBI): Array[Byte] = {
+      val bs = x.toByteArray; val out = new Array[Byte](32)
+      val src = if (bs.length > 32) java.util.Arrays.copyOfRange(bs, bs.length - 32, bs.length) else bs
+      System.arraycopy(src, 0, out, 32 - src.length, src.length); out
+    }
+    if (pt == null) fromBytes(new Array[Byte](64)) else fromBytes(to32(pt(0)) ++ to32(pt(1)))
+  }
+
+  // bn254 (alt_bn128) G1 addition (0x06) and scalar multiplication (0x07).
+  @extern
+  def bn254Add(input: SList[BigInt]): SList[BigInt] = {
+    val b = toBytes(input)
+    def be(off: Int): JBI = {
+      val a = new Array[Byte](32); var i = 0
+      while (i < 32) do { if (off + i < b.length) a(i) = b(off + i); i += 1 }
+      new JBI(1, a)
+    }
+    def pt(x: JBI, y: JBI): Array[JBI] = if (x.signum == 0 && y.signum == 0) null else Array(x, y)
+    val p = new JBI("30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47", 16)
+    bn254Out(curveAdd(pt(be(0), be(32)), pt(be(64), be(96)), p))
+  }
+
+  @extern
+  def bn254Mul(input: SList[BigInt]): SList[BigInt] = {
+    val b = toBytes(input)
+    def be(off: Int): JBI = {
+      val a = new Array[Byte](32); var i = 0
+      while (i < 32) do { if (off + i < b.length) a(i) = b(off + i); i += 1 }
+      new JBI(1, a)
+    }
+    val x = be(0); val y = be(32); val k = be(64)
+    val point = if (x.signum == 0 && y.signum == 0) null else Array(x, y)
+    val p = new JBI("30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47", 16)
+    bn254Out(curveMul(k, point, p))
+  }
+
   // P-256 / secp256r1 verify (0x100, EIP-7951, new in Osaka). Input is 160 bytes:
   // msgHash(32) | r(32) | s(32) | qx(32) | qy(32). Output is 32 bytes of value 1 on
   // a valid signature, empty otherwise. Uses the JDK's verified EC implementation.
@@ -302,7 +370,7 @@ object Precompiles:
   // 0x03 RIPEMD-160, 0x04 identity, 0x05 MODEXP, 0x09 BLAKE2F, 0x100 P-256 verify.
   // (The bn254 and KZG ones still fall through to the empty-account path.)
   def isImplemented(a: BigInt): Boolean =
-    a == 1 || a == 2 || a == 3 || a == 4 || a == 5 || a == 9 || a == 256
+    a == 1 || a == 2 || a == 3 || a == 4 || a == 5 || a == 6 || a == 7 || a == 9 || a == 256
 
   def gasFor(a: BigInt, input: SList[BigInt]): BigInt = {
     require(isImplemented(a) && input.size >= 0)
@@ -311,6 +379,8 @@ object Precompiles:
     else if (a == 3) ripemd160Gas(input.size)
     else if (a == 4) identityGas(input.size)
     else if (a == 5) modexpGas(input)
+    else if (a == 6) BigInt(150) // bn254 ecAdd (EIP-1108)
+    else if (a == 7) BigInt(6000) // bn254 ecMul (EIP-1108)
     else if (a == 9) blake2fGas(input)
     else BigInt(6900) // P-256 verify, fixed (EIP-7951)
   }.ensuring(_ >= 0)
@@ -322,6 +392,8 @@ object Precompiles:
     else if (a == 3) ripemd160(input)
     else if (a == 4) identity(input)
     else if (a == 5) modexp(input)
+    else if (a == 6) bn254Add(input)
+    else if (a == 7) bn254Mul(input)
     else if (a == 9) blake2f(input)
     else p256Verify(input)
   }
