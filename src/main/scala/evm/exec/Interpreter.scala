@@ -889,6 +889,7 @@ object Interpreter:
         } else {
           val avail = s1.gas - s1.gas / 64
           val g = if (gasReq.value < avail) gasReq.value else avail
+          argsLen.bounded
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
           val calleeStorage = s1.world.storageOf(callee)
           val child = ExecState.subFrame(s1.world.codeOf(callee), callee, s1.msg.self, Word256.Zero,
@@ -929,6 +930,7 @@ object Interpreter:
         } else {
           val avail = s1.gas - s1.gas / 64
           val g = if (gasReq.value < avail) gasReq.value else avail
+          argsLen.bounded
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
           val child = ExecState.subFrame(s1.world.codeOf(target), s1.msg.self, s1.msg.caller,
             s1.msg.callValue, callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, s1.world,
@@ -974,6 +976,7 @@ object Interpreter:
           val avail = s1.gas - s1.gas / 64
           val baseFwd = if (gasReq.value < avail) gasReq.value else avail
           val g = baseFwd + (if (hasValue) BigInt(2300) else BigInt(0))
+          argsLen.bounded
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
           val transferred = s1.world.transfer(s1.msg.self, callee, value)
           val child = ExecState.subFrame(transferred.codeOf(callee), callee, s1.msg.self, value,
@@ -1019,6 +1022,7 @@ object Interpreter:
           val avail = s1.gas - s1.gas / 64
           val baseFwd = if (gasReq.value < avail) gasReq.value else avail
           val g = baseFwd + (if (hasValue) BigInt(2300) else BigInt(0))
+          argsLen.bounded
           val callData = Bytes.readList(s.memory.data, argsOff.value, argsLen.value)
           val child = ExecState.subFrame(s1.world.codeOf(target), s1.msg.self, s1.msg.self, value,
             callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, s1.world, s1.storage, s1.original,
