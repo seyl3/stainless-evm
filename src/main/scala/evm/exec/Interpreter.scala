@@ -26,9 +26,12 @@ case class CallReject(state: ExecState) extends CallPrep
 // (false for STATICCALL); self is the child's own account (its storage is written
 // back into the world there); sameAccount means the child ran on the parent's own
 // storage (DELEGATECALL), so the parent's storage reflects the child's; preWorld is
-// the world to restore if the child fails/reverts (rolls back value transfer too).
+// the world to restore if the child fails/reverts (rolls back value transfer too);
+// retOff/retLen is the caller memory region the child's return data is written to.
 case class CallEnter(child: ExecState, parentForwarded: ExecState, rest: Stack, forwarded: BigInt,
-                     commitState: Boolean, sameAccount: Boolean, self: Address, preWorld: WorldState) extends CallPrep
+                     commitState: Boolean, sameAccount: Boolean, self: Address, preWorld: WorldState,
+                     retOff: BigInt, retLen: BigInt) extends CallPrep:
+  require(retOff >= 0 && retLen >= 0)
 
 // The analogue for CREATE/CREATE2: a rejected creation (push 0, continue the
 // parent) or an initcode frame to run. newAddr is the derived contract address;
@@ -879,7 +882,9 @@ object Interpreter:
           val child = ExecState.subFrame(s1.world.codeOf(callee), callee, s1.msg.self, Word256.Zero,
             callData, g, s1.depth + 1, true, s1.block, s1.tx, s1.world, calleeStorage, calleeStorage,
             s1.accessedAccounts, s1.created)
-          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, false, false, callee, s.world)
+          retOff.bounded
+          retLen.bounded
+          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, false, false, callee, s.world, retOff.value, retLen.value)
         }
       }
     }
@@ -914,7 +919,9 @@ object Interpreter:
           val child = ExecState.subFrame(s1.world.codeOf(target), s1.msg.self, s1.msg.caller,
             s1.msg.callValue, callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, s1.world,
             s1.storage, s1.original, s1.accessedAccounts, s1.created)
-          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, true, true, s1.msg.self, s.world)
+          retOff.bounded
+          retLen.bounded
+          CallEnter(child, s1.copy(gas = s1.gas - g), rest, g, true, true, s1.msg.self, s.world, retOff.value, retLen.value)
         }
       }
     }
@@ -956,7 +963,9 @@ object Interpreter:
           val child = ExecState.subFrame(transferred.codeOf(callee), callee, s1.msg.self, value,
             callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, transferred,
             transferred.storageOf(callee), transferred.storageOf(callee), s1.accessedAccounts, s1.created)
-          CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, false, callee, s.world)
+          retOff.bounded
+          retLen.bounded
+          CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, false, callee, s.world, retOff.value, retLen.value)
         }
       }
     }
@@ -996,7 +1005,9 @@ object Interpreter:
           val child = ExecState.subFrame(s1.world.codeOf(target), s1.msg.self, s1.msg.self, value,
             callData, g, s1.depth + 1, s1.static, s1.block, s1.tx, s1.world, s1.storage, s1.original,
             s1.accessedAccounts, s1.created)
-          CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, true, s1.msg.self, s.world)
+          retOff.bounded
+          retLen.bounded
+          CallEnter(child, s1.copy(gas = s1.gas - baseFwd), rest, g, true, true, s1.msg.self, s.world, retOff.value, retLen.value)
         }
       }
     }
@@ -1013,10 +1024,14 @@ object Interpreter:
     val success = childRes.status == Status.Halted
     val commit = success && enter.commitState
     val refund = if (childRes.gas < enter.forwarded) childRes.gas else enter.forwarded
+    // The child's return data is written into the caller's memory at retOff, up to
+    // retLen bytes (min with the actual data length). A failed child has no data.
+    val writeLen = if (enter.retLen < childRes.returnData.size) enter.retLen else childRes.returnData.size
     if (enter.rest.data.size >= Stack.MAXIMUM_STACK_SIZE) enter.parentForwarded.fail
     else enter.parentForwarded.copy(
       gas = enter.parentForwarded.gas + refund,
       stack = enter.rest.push(if (success) Word256.One else Word256.Zero),
+      memory = enter.parentForwarded.memory.copyIn(enter.retOff, childRes.returnData, 0, writeLen),
       returnData = childRes.returnData,
       world = if (commit) childRes.world.withStorage(enter.self, childRes.storage) else enter.preWorld,
       storage = if (commit && enter.sameAccount) childRes.storage else enter.parentForwarded.storage,

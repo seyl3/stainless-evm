@@ -489,6 +489,21 @@ class TransactionSuite extends munit.FunSuite {
     assertEquals(res.gasUsed, BigInt(0))
   }
 
+  test("a call writes the child's return data into the caller's retOffset memory") {
+    // callee returns the byte 0x42; caller STATICCALLs with retOff=0, retLen=1, then
+    // RETURNs memory[0:1] to show the return data landed there (not via RETURNDATACOPY).
+    val calleeCode = code(0x60, 0x42, 0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xF3)
+    val callerCode = code(
+      0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x61, 0x20, 0x00, 0x61, 0xC3, 0x50, 0xFA,
+      0x50, 0x60, 0x01, 0x60, 0x00, 0xF3)
+    val world = WorldState(Map(
+      to -> Account(Word256.Zero, callerCode),
+      callee -> Account(Word256.Zero, calleeCode)))
+    val res = Transaction.run(tx(200000), BlockContext.empty, world)
+    assertEquals(res.status, Status.Halted)
+    assertEquals(res.returnData.head, BigInt(0x42))
+  }
+
   test("a creation transaction deploys a contract at the derived address") {
     // initcode PUSH1 1, PUSH1 0, RETURN returns mem[0:1] = 0x00, a 1-byte STOP
     val initcode = code(0x60, 0x01, 0x60, 0x00, 0xF3).code
